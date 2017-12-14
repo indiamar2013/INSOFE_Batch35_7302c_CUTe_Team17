@@ -55,12 +55,21 @@ kable(head(train_data_orig, 10))
 
 * There're 109 regressors and 2 target variables (y1 and y2) and 1769 observations
 * Data appears to already have been scaled and standardized. 
-* There are a few empty columns (ie all )
+* There are a few empty columns (ie all rows are blank in these columns )
 * Some values are missing in other columns
+
 
 
 ## Preprocessing
 ### Empty Columns
+* Assessing the extent of empty columns 
+
+* The following columns are completely empty
+
+```{r}
+
+```
+
 ### Handle NAs
 ### Normalization
 ### Create Train-Test split
