@@ -1,0 +1,92 @@
+---
+title: "7302c CUTe"
+author: "Amar Rao"
+date: "December 14, 2017"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    theme: united
+    highlight: tang
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+    code_folding: hide
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#clear all environment and session variables
+rm(list = ls(all = TRUE))
+
+library(knitr)
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(DMwR)
+
+```
+
+## Reading data
+
+* set working directory
+```{r}
+setwd('c:/Users/212629693/Documents/Personal/ds-classes/INSOFE_Batch35_7302c_CUTe_Team17')
+```
+
+### Load the data set
+
+```{r}
+train_data_orig <- read.csv('Datasets/train_data.csv', header = TRUE, sep = ',', na.strings = "", numerals = "no.loss")
+
+kable(summary(train_data_orig))
+
+```
+
+```{r}
+kable(head(train_data_orig, 10))
+```
+
+
+###Observations:
+
+* There're 109 regressors and 2 target variables (y1 and y2) and 1769 observations
+* Data appears to already have been scaled and standardized. 
+* There are a few empty columns (ie all )
+* Some values are missing in other columns
+
+
+## Preprocessing
+### Empty Columns
+### Handle NAs
+### Normalization
+### Create Train-Test split
+## Understanding the Regressors
+## Assessing fit for Timeseries Forecasting
+## Initial Model
+## Final Model
+## Predictions
+## Performance
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+kable(summary(cars))
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
