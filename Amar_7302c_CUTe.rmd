@@ -17,37 +17,59 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 #clear all environment and session variables
 rm(list = ls(all = TRUE))
+
+
+```
+
+
+Libraries
+```{r}
 
 library(knitr)
 library(tidyverse)
 library(lubridate)
 library(caret)
 library(DMwR)
-
+library(forecast)
+library(lubridate)
+library(imputeTS)
+library(TTR)
+library(graphics)
+library(zoo)
 ```
 
 ## Reading data
 
 * set working directory
 ```{r}
-setwd('c:/Users/212629693/Documents/Personal/ds-classes/INSOFE_Batch35_7302c_CUTe_Team17')
+setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
 ```
 
 ### Load the data set
 
 ```{r}
-train_data_orig <- read.csv('Datasets/train_data.csv', header = TRUE, sep = ',', na.strings = "", numerals = "no.loss")
+fin_data_orig <- read.csv('Datasets/fin_data.csv', header = TRUE, sep = ',', na.strings = "", colClasses = "double", numerals = "no.loss")
+str(fin_data_orig, list.len = ncol(fin_data_orig))
+head(fin_data_orig)
+```
 
-kable(summary(train_data_orig))
+* Although all the columns except timestamp and t2 appear to be numeric, read.csv has loaded them as factors. Converting them back to numeric.
 
+```{r}
+cat_attrs <- c('y2')
+num_attrs <- setdiff(colnames(fin_data_orig), cat_attrs)
+num_attrs
+
+fin_data_orig[cat_attrs] <- data.frame(sapply(fin_data_orig[cat_attrs], as.factor))
+str(fin_data_orig, list.len = ncol(fin_data_orig))
 ```
 
 ```{r}
-kable(head(train_data_orig, 10))
+kable(tail(fin_data_orig, 10))
 ```
 
 
@@ -57,45 +79,150 @@ kable(head(train_data_orig, 10))
 * Data appears to already have been scaled and standardized. 
 * There are a few empty columns (ie all rows are blank in these columns )
 * Some values are missing in other columns
+* Timestamp starts as a day number at 14 and goes up to 1782 days (1769 days in total)
 
 
 
 ## Preprocessing
 ### Empty Columns
-* Assessing the extent of empty columns 
 
-* The following columns are completely empty
+  * Following columns are completely blank in the data frame.
 
 ```{r}
+emptycols <- colnames(fin_data_orig[,sapply(fin_data_orig, function(x) { all(is.na(x))})])
+emptycols
+```
 
+*Removing these columns
+
+```{r}
+fin_data <- fin_data_orig[, sapply(fin_data_orig, function(x) { !all(is.na(x))})]
 ```
 
 ### Handle NAs
-### Normalization
+
+* Checking how spread the NAs are in other columns
+```{r}
+colswithna <- colSums(is.na(fin_data))
+
+sort(colswithna, decreasing = TRUE)
+
+```
+
+#### The following columns have very large number of NAs so imputing those would make the data diluted.
+
+*f_63
+*f_27
+*f_3
+*f_28
+*f_31
+*f_35
+*f_25
+
+####So removing those columns
+
+```{r}
+fin_data <- subset(fin_data,select = -c(f_63, f_27, f_3, f_28, f_31, f_35, f_25))
+
+```
+### convert timestamp to date
+* The timestamps are given as day numbers starting with 14. We have observations for 1782 days = 4.88 years of data. 
+* Generating dates from 2013
+```{r}
+origindate <- as.Date('2011-12-31', format = '%Y-%m-%d')
+origindate
+fin_data$timestamp = as.Date(fin_data$timestamp, origindate)
+
+head(fin_data)
+tail(fin_data)
+```
+
 ### Create Train-Test split
+
+
 ## Understanding the Regressors
 ## Assessing fit for Timeseries Forecasting
+* Need to check if y1 exhibits strong trend and some seasonality. If so, we can proceed with timeseries forecasting.
+
+```{r}
+y1ts <- ts(fin_data$y1, start = c(2012, 1,1), frequency = 365.25)
+plot(y1ts,
+     type="l",
+     lwd=2,
+     col="blue",
+     xlab="Daily",
+     ylab="Change",
+     main="Time series plot for stock - for target variable y1")
+```
+
+```{r}
+y1decomp <- decompose(x = y1ts)
+plot(y1decomp)
+```
+
+###Observations:
+* We see that there's a pronounced trend
+* Seasonality at daily frequency doesn't seem to exist. 
+* To see if there's a seasonality at all, taking weekly average first (then monthly average)
+* and decomposing.
+
+```{r}
+fin_data$Year <- as.numeric(year(fin_data$timestamp))
+fin_data$Month <- as.numeric(month(fin_data$timestamp))
+fin_data$WeekOfYear <- isoweek(fin_data$timestamp)
+
+fin_data_weekly <- fin_data %>% group_by(Year, Month, WeekOfYear) %>% summarize("WeeklyAvgY1" = mean(y1))
+fin_data_monthly <- fin_data %>% group_by(Year, Month) %>% summarize("MonthlyAvgY1" = mean(y1))
+
+```
+
+
+```{r}
+
+
+weeklyy1ts <- ts(fin_data_weekly$WeeklyAvgY1, start = c(2012, 1,1), frequency = 52)
+plot(decompose(weeklyy1ts))
+```
+
+
+```{r}
+monthlyy1ts <- ts(fin_data_monthly$MonthlyAvgY1, start = c(2012, 1,1), frequency = 12)
+plot(decompose(monthlyy1ts))
+```
+
+### Observations:
+Based on the above, it is clear that there's no clear seasonality that affects the daily percent change in the value of y1. Consequently will not do a Seasonal TS forecasting
+
+
+### Train-test split
+
+```{r}
+fin_train <- fin_data[which(fin_data$timestamp <= as.Date('2014-12-31', format = '%Y-%m-%d')), ]
+fin_test <- fin_data[which(fin_data$timestamp > as.Date('2014-12-31', format = '%Y-%m-%d')), ]
+
+```
+
+###Imputation
+
+```{r}
+preproc_preds <- preProcess(x = fin_train, method = "knnImpute", k = 15)
+
+fin_train <- predict(object = preproc_preds, fin_train)
+fin_test <- predict(object = preproc_preds, fin_test)
+sum(is.na(fin_train))
+sum(is.na(fin_test))
+
+```
+
+### create a multivariate timeseries object
+```{r}
+fin_train_ts <- ts(select(fin_train, -timestamp), start = c(2012,1), frequency = 365.25)
+
+```
+
 ## Initial Model
+
 ## Final Model
 ## Predictions
 ## Performance
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-kable(summary(cars))
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
