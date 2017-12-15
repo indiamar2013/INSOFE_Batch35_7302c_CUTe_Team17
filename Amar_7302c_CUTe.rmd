@@ -46,7 +46,7 @@ library(zoo)
 
 * set working directory
 ```{r}
-setwd('C:/Users/212629693/Documents/Personal/ds-classes/INSOFE_Batch35_7302c_CUTe_Team17')
+setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
 
 ```
 
@@ -165,6 +165,29 @@ tail(fin_data$t_20, 100)
 ```{r}
 fin_data <- subset(fin_data, select = -c(t_10, t_13, t_30, t_20))
 
+
+```
+* The target variable y1 is a percent change. Will use another column to get a price so that
+* it is easier to see trend and forecast
+```{r}
+
+setdailyprice <- function(daily_price) {
+  retprice <- daily_price
+  for(i in 1:length(daily_price)) {
+    if (i == 1) {
+      retprice[i] = 1000
+    } else {
+      retprice[i] = retprice[i-1]*(1+ daily_price[i])
+    }
+
+  }
+  return(retprice)
+}
+
+fin_data$DailyPrice <- setdailyprice(fin_data$y1)
+head(fin_data)
+
+
 ```
 
 
@@ -176,10 +199,9 @@ fin_data <- subset(fin_data, select = -c(t_10, t_13, t_30, t_20))
 
 ```{r}
 
-fin_train <- fin_data[rownames(y1_data) <= as.Date('2014-12-31', format = '%Y-%m-%d'), ]
+fin_train <- fin_data[rownames(fin_data) <= as.Date('2014-12-31', format = '%Y-%m-%d'), ]
 
-fin_test <- fin_data[rownames(y1_data) > as.Date('2014-12-31', format = '%Y-%m-%d'), ]
-
+fin_test <- fin_data[rownames(fin_data) > as.Date('2014-12-31', format = '%Y-%m-%d'), ]
 
 ```
 
@@ -189,7 +211,7 @@ fin_test <- fin_data[rownames(y1_data) > as.Date('2014-12-31', format = '%Y-%m-%
 
 library(RANN)
 set.seed(1234)
-preproc_preds <- preProcess(x = subset(fin_train, select = -c(y1, y2)), method = c("center", "scale", "knnImpute"))
+preproc_preds <- preProcess(x = subset(fin_train, select = -c(y1, y2)), method = c("knnImpute"))
 
 fin_train <- predict(object = preproc_preds, fin_train)
 fin_test <- predict(object = preproc_preds, fin_test)
@@ -269,7 +291,7 @@ fin_train$WeekOfYear = NULL
 * For this, we need to first create a matrix of all regressors
 
 ```{r}
-
+library(Matrix)
 fin_x_reg <- subset(fin_train, select = -c(y1, y2))
 
 nrow(fin_x_reg)
@@ -294,6 +316,8 @@ for(col in names(fin_data)) {
 
 ```{r}
 fin_train <- subset(fin_train, select = -c(t_9, t_16, t_22))
+fin_test <- subset(fin_test, select = -c(t_9, t_16, t_22))
+
 
 ncol(subset(fin_train, select = -c(y1, y2)))
 #confirming if that fixes the rank issue
@@ -307,7 +331,9 @@ rankMatrix(as.matrix(subset(fin_train, select = -c(y1, y2))))
 ```{r}
 
 y1_train <- subset(fin_train, select = -y2)
+y1_test <- subset(fin_test, select = -y2)
 y2_train <- subset(fin_train, select = -y1)
+y2_test <- subset(fin_test, select = -y1)
 
 
 ```
@@ -320,6 +346,19 @@ base_linreg
 ```
 
 * since there are several variables, using stepAIC to see if we can reduce the number of coefficients keeping significant ones
+
+
+```{r}
+
+ols_all_preds <- predict(base_linreg, y1_test)
+
+print('Error metrics for Train data')
+print(regr.eval(ols_all_preds, y1_train$y1))
+print("")
+print('Error metrics for Test data')
+print(regr.eval(ols_all_preds, y1_test$y1))
+```
+
 ```{r}
 library(MASS)
 stepAIC(base_linreg, direction = "both")
@@ -330,14 +369,68 @@ stepAIC(base_linreg, direction = "both")
 
 d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44
     
+    
+```{r}
+aic_rec_mdl <- lm(formula = y1 ~ d_0 + d_1 + d_2 + d_3 + d_4 + f_0 + f_5 + f_7 + 
+    f_8 + f_9 + f_11 + f_13 + f_14 + f_15 + f_16 + f_18 + f_19 + 
+    f_20 + f_22 + f_23 + f_24 + f_29 + f_30 + f_32 + f_33 + f_34 + 
+    f_36 + f_37 + f_39 + f_40 + f_41 + f_42 + f_43 + f_44 + f_46 + 
+    f_48 + f_49 + f_50 + f_51 + f_52 + f_53 + f_54 + f_56 + f_58 + 
+    f_59 + f_60 + f_62 + t_0 + t_2 + t_3 + t_6 + t_7 + t_11 + 
+    t_12 + t_14 + t_17 + t_18 + t_19 + t_21 + t_24 + t_25 + t_27 + 
+    t_29 + t_32 + t_33 + t_34 + t_35 + t_36 + t_37 + t_38 + t_39 + 
+    t_40 + t_43 + t_44, data = y1_train)
+
+
+aic_rec_mdl
+```
+
+```{r}
+aic_preds <- predict(aic_rec_mdl, y1_test)
+
+regr.eval(aic_preds, y1_train$y1)
+regr.eval(aic_preds, y1_test$y1)
+
+```
+
+```{r}
+library(glmnet)
+set.seed(1234)
+
+names(y1_train)
+cv_lasso <- cv.glmnet(as.matrix(subset(y1_train, select = -y1)), as.matrix(y1_train$y1), alpha = 1, type.measure = "mae", nfolds = 4)
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE)
+
+lasso_1 <- glmnet(x = as.matrix(subset(y1_train, select = -y1)), y = as.matrix(y1_train$y1), alpha = 1, lambda = cv_lasso$lambda.min)
+
+lasso_1_preds <- predict(lasso_1, as.matrix(subset(y1_test, select = -y1)))
+regr.eval(lasso_1_preds, y1_test$y1)
+
+X_train = as.matrix(subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)))
+
+X_test = as.matrix(subset(y1_test, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)))
+cv_lasso_1 <- cv.glmnet(X_train, as.matrix(y1_train$y1), alpha = 1, type.measure = "mse", nfolds = 4)
+plot(cv_lasso_1)
+
+cv_lasso_2 <- glmnet(X_train, as.matrix(y1_train$y1), lambda = cv_lasso_1$lambda.min, alpha = 1)
+
+cv_lasso_2_preds <- predict(cv_lasso_2, X_test)
+
+regr.eval(cv_lasso_2_preds, y1_test$y1)
+
+```
 
 #### Assessing the colinearity
 
 ```{r}
+library(car)
+vif(mod = base_linreg)
+
 library('corrplot')
 
 
-corrplot(cor(subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), use = "complete.obs"), method = "color")
+corrplot(cor(subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), use = "complete.obs"), method = "number")
 
 ```
 
@@ -356,12 +449,27 @@ ndiffs(y1ts)
 
 ```{r}
 
-arima1 <- Arima(y = y1ts, order = c(5,0,0), xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), include.drift = TRUE)
+arima2 <- Arima(y = y1ts, order = c(2,0,0), xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), include.drift = TRUE)
 
-arima1
+arima1 <- Arima(y = y1ts, order = c(2,0,1))
 
-fin_arima1 <- auto.arima(y1ts)
+
+arima1_preds <- forecast(object = arima1, h = nrow(y1_test))
+accuracy(arima1_preds,y1_test$y1)
+
+plot(arima1_preds)
+
+
+
+fin_arima1 <- auto.arima(y1ts, xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), allowdrift = TRUE)
 fin_arima1
+```
+
+
+```{r}
+auto_arima_preds <- forecast(object = fin_arima1, h = nrow(y1_test), xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)))
+accuracy(auto_arima_preds, y1_test$y1)
+
 ```
 
 
