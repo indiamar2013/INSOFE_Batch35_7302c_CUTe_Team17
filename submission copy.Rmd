@@ -1,0 +1,434 @@
+# CUTe code
+```{r "setup", include=FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "/Users/Banner/Downloads/Batch35_CUTE_CSE7302c_Data_Instructions/Datasets")
+
+```
+
+
+##Load Libraries and the data
+
+
+```{r}
+
+library(caret)
+library(DMwR)
+library(ROCR)
+library(glmnet)
+library(MASS)
+
+```
+
+
+## Read the data
+
+
+```{r}
+
+rm(list=ls(all=TRUE))
+
+stock<-read.csv('train_data.csv')
+
+```
+
+
+###Classification Algorithm
+
+#### Look at the structure and summary statstics of the dataset
+
+
+```{r}
+
+str(stock)
+summary(stock)
+
+```
+
+
+#### Check for NA Values
+
+```{r}
+
+sort(colSums(is.na(stock)))
+
+```
+
+```{r}
+
+sort(colSums(stock==0), decreasing = T)
+
+```
+
+#### Remove empty, irrelevant columns
+
+
+```{r}
+# Columns with each value as an NA
+stock$timestamp<-NULL
+stock$f_1<-NULL
+stock$f_6<-NULL
+stock$f_26<-NULL
+stock$f_38<-NULL
+stock$f_57<-NULL
+stock$f_61<-NULL
+
+#Columns with approximately 30% of the data as NA
+stock$f_17<-NULL
+stock$f_35<-NULL
+stock$f_3<-NULL
+stock$f_28<-NULL
+stock$f_31<-NULL
+stock$f_27<-NULL
+stock$f_63<-NULL
+
+#Columns with a lot of zero values
+stock$t_10<-NULL
+stock$t_13<-NULL
+stock$t_30<-NULL
+stock$t_20<-NULL
+
+#Columns with rank 
+stock$t_9<-NULL
+stock$t_16<-NULL
+stock$t_22<-NULL
+```
+
+
+#### Split into Train Test set
+
+
+```{r}
+stock$y2<-as.factor(as.character(stock$y2))
+
+set.seed(1234)
+train_rows<-createDataPartition(y = stock$y2, p = 0.7,list = FALSE)
+
+train_data<-stock[train_rows,]
+train_data<-train_data[,-89]
+
+test_data<-stock[-train_rows,]
+test_data<-test_data[,-89]
+
+numAttr<-colnames(train_data[,-89])
+numAttr
+
+
+```
+
+
+#### Impute Missing values using knn Imputation
+
+
+```{r}
+
+imputer_values<-preProcess(x = train_data[,numAttr], method = "knnImpute")
+train_data[,numAttr]<-predict(object=imputer_values,newdata=train_data[,numAttr])
+test_data[,numAttr]<-predict(object = imputer_values,newdata = test_data[,numAttr])
+
+```
+
+
+#### Scale and Standerdize the model
+
+
+```{r}
+
+std_model<-preProcess(train_data[,!names(train_data) %in% c("y2")],method = c("center","scale"))
+
+train_data_std<-predict(object = std_model, newdata = train_data)
+
+test_data_std<-predict(object = std_model, newdata = test_data)
+
+```
+
+
+
+#### Choose relevant features and run the classification algorithm
+
+
+```{r}
+
+model_glm<-glm(y2~.,data = train_data_std,family = "binomial")
+
+model_glm_aic<-stepAIC(object = model_glm,direction = "both")
+model_glm_aic$coefficients
+
+```
+
+
+### Logistic Regression with Regularization on Classification problem
+
+#### Convert target and independent variables into matrix format
+
+
+```{r}
+
+X_train<-as.matrix(train_data[,-c(ncol(train_data))])
+y_train<-as.matrix(train_data[,c(ncol(train_data))])
+
+X_test<-as.matrix(test_data[,-c(ncol(train_data))])
+y_test<-as.matrix(test_data[,c(ncol(train_data))])
+
+```
+
+
+```{r}
+set.seed(1234)
+
+lasso<-cv.glmnet(X_train,y_train,type.measure = "class", alpha = 1, nfolds = 5, family = "binomial")
+plot(lasso)
+?cv.glmnet
+model_class_lasso<-glmnet(X_train,y_train,alpha = 1,lambda = lasso$lambda.min, family = "binomial")
+prob_class_lasso<-predict(model_class_lasso,X_test)
+pred_class_lasso<-ifelse(prob_class_lasso>0.4,"1","0")
+confusionMatrix(pred_class_lasso,y_test)
+
+
+```
+
+
+#### Use Prediction values to create an ROC plot
+
+
+```{r}
+
+prob_train<-predict(model_glm,newx = X_train, type = "response")
+
+pred <- prediction(prob_train, train_data_std$y2)
+perf <- performance(pred, measure="tpr", x.measure="fpr")
+
+plot(perf, col=rainbow(10), colorize=T, print.cutoffs.at=seq(0,1,0.05))
+perf_auc <- performance(pred, measure="auc")
+
+auc <- perf_auc@y.values[[1]]
+print(auc)
+
+```
+
+
+#### Predict on test data and use a suitable threshhold value for the confusion matrix.
+
+
+```{r}
+
+test_data_labels<-test_data_std$y2
+
+prob_test<-predict(model_glm, test_data_std, type = "response")
+
+preds_test <- ifelse(prob_test > 0.4, "1", "0")
+
+
+confusionMatrix(preds_test,test_data_labels)
+
+```
+
+
+##Regression Code
+
+#### Split into train test data
+
+
+```{r}
+
+train_rows_reg<-sample(x=seq(1,nrow(stock),1), size=0.7*nrow(stock))
+
+train_data_reg<-stock[train_rows_reg,]
+
+test_data_reg<-stock[-train_rows_reg,]
+
+train_data_reg<-train_data_reg[,-90]
+test_data_reg<-test_data_reg[,-90]
+
+numAttr<-colnames(test_data_reg[,-89])
+```
+
+
+#### Preprocessing steps for imputing missing values and scaling, standardizing
+
+
+```{r}
+
+imputer_values<-preProcess(x = train_data_reg[,numAttr], method = "knnImpute")
+
+train_data_reg<-predict(object=imputer_values,newdata=train_data_reg)
+
+test_data_reg<-predict(object = imputer_values,newdata = test_data_reg)
+
+```
+
+
+```{r}
+
+std_model<-preProcess(train_data_reg[,!names(train_data_reg) %in% c("y1")],method = c("center","scale"))
+
+train_data_reg_std<-predict(object = std_model, newdata = train_data_reg)
+
+test_data_reg_std<-predict(object = std_model, newdata = test_data_reg)
+
+```
+
+
+#### Split the data into target and independent values and convert into matrix
+
+
+```{r}
+
+X_train<-as.matrix(train_data_reg[,-ncol(train_data_reg)])
+y_train<-as.matrix(train_data_reg[,ncol(train_data_reg)])
+
+X_test<-as.matrix(test_data_reg[,-ncol(train_data_reg)])
+y_test<-as.matrix(test_data_reg[,ncol(train_data_reg)])
+
+```
+
+
+###Lasso Regression
+
+#### Run glmnet to choose optimal lambda
+
+
+```{r}
+set.seed(1234)
+
+cv_lasso<-cv.glmnet(X_train,y_train,alpha = 1,type.measure = "mse",nfold=5)
+
+plot(cv_lasso)
+
+```
+
+
+#### Plot the error metric as a function of log lambda values
+
+
+```{r}
+
+plot(cv_lasso$glmnet.fit,xvar="lambda",label=TRUE)
+
+```
+
+
+#### Print out minimum lambda value and the coefficients of the lasso regression
+
+
+```{r}
+
+print(cv_lasso$lambda.min)
+
+coef(cv_lasso)
+
+```
+
+
+#### Train the lasso model on the train set using lambda min
+
+
+```{r}
+
+lasso_model<-glmnet(X_train,y_train,lambda=cv_lasso$lambda.min,alpha=1)
+
+preds_lasso<-predict(lasso_model,X_test)
+regr.eval(preds = preds_lasso,trues = y_test)
+
+
+```
+
+
+###Ridge Regression
+
+#### Run glmnet to choose optimal lambda
+
+
+```{r}
+
+set.seed(1234)
+
+cv_ridge<-cv.glmnet(X_train,y_train,alpha = 0,type.measure = "mse",nfold=4)
+
+plot(cv_ridge)
+
+```
+
+
+#### Print out min lambda and the coefficients of the ridge regression
+
+
+```{r}
+
+print(cv_ridge$lambda.min)
+coef(cv_ridge)
+
+```
+
+
+#### Plot the error metric as a function of the log lambda values
+
+
+```{r}
+# Plot the coefficients for the Ridge Regression as a function of Log Lambda
+plot(cv_ridge$glmnet.fit,xvar="lambda",label=TRUE)
+
+```
+
+
+#### Train the lasso model on the train set using lambda min
+
+
+```{r}
+
+ridge_model<-glmnet(X_train,y_train,lambda=cv_ridge$lambda.min,alpha=0)
+
+preds_ridge<-predict(ridge_model,X_test)
+regr.eval(preds = preds_ridge, trues = y_test)
+
+```
+
+
+###Elastic Nets Regression
+
+#### Run glmnet to choose optimal lambda
+
+
+```{r}
+
+set.seed(1234)
+
+cv_elastic_net<-cv.glmnet(X_train,y_train,alpha = 0.5,type.measure = "mse",nfold=4)
+
+plot(cv_elastic_net)
+
+```
+
+
+#### Plot the error metric as a function of the log lambda values
+
+
+```{r}
+
+plot(cv_elastic_net$glmnet.fit,xvar="lambda",label=TRUE)
+
+```
+
+
+#### Print out min lambda and the coefficients of the elastic-net regression
+
+
+```{r}
+
+print(cv_elastic_net$lambda.min)
+coef(cv_elastic_net)
+
+```
+
+
+#### Train the elastic-net model on the train set using lambda min
+
+
+```{r}
+
+elasticnet_model<-glmnet(X_train,y_train,lambda=cv_elastic_net$lambda.min,alpha=0.5)
+
+preds_elasticnet<-predict(elasticnet_model,X_test)
+regr.eval(preds = preds_elasticnet, trues = y_test)
+
+```
