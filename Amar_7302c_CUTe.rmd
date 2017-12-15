@@ -46,7 +46,7 @@ library(zoo)
 
 * set working directory
 ```{r}
-setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
+setwd('C:/Users/212629693/Documents/Personal/ds-classes/INSOFE_Batch35_7302c_CUTe_Team17')
 
 ```
 
@@ -167,45 +167,22 @@ fin_data <- subset(fin_data, select = -c(t_10, t_13, t_30, t_20))
 
 
 ```
-* The target variable y1 is a percent change. Will use another column to get a price so that
-* it is easier to see trend and forecast
-```{r}
-
-setdailyprice <- function(daily_price) {
-  retprice <- daily_price
-  for(i in 1:length(daily_price)) {
-    if (i == 1) {
-      retprice[i] = 1000
-    } else {
-      retprice[i] = retprice[i-1]*(1+ daily_price[i])
-    }
-
-  }
-  return(retprice)
-}
-
-fin_data$DailyPrice <- setdailyprice(fin_data$y1)
-head(fin_data)
-
-
-```
-
-
-
-
 
 
 ### Train-test split
 
 ```{r}
+#Since this is chronological data, we cannot do random sampling.
+# Setting the first 70% to train and last 30% to test
+train_rows <- 1:round(nrow(fin_data)*0.7)
 
-fin_train <- fin_data[rownames(fin_data) <= as.Date('2014-12-31', format = '%Y-%m-%d'), ]
+fin_train <- fin_data[train_rows, ]
 
-fin_test <- fin_data[rownames(fin_data) > as.Date('2014-12-31', format = '%Y-%m-%d'), ]
+fin_test <- fin_data[-train_rows, ]
 
 ```
 
-###Imputation and scaling
+###Imputation
 
 ```{r}
 
@@ -242,8 +219,336 @@ plot(y1decomp)
 ```
 
 ###Observations:
-* We see that there's a pronounced trend
-* Seasonality at daily frequency doesn't seem to exist. 
+* We see that there's a fairly steady trend moving within a small range
+* Seasonality at daily frequency seem to exist. 
+
+###Will first use this without any transformations to see if ARIMA model exists
+### Arima requires xargs to be of rank = ncols, so we need to ensure that's the case
+
+```{r}
+library(Matrix)
+fin_x_reg <- subset(fin_train, select = -c(y1, y2))
+
+nrow(fin_x_reg)
+ncol(fin_x_reg)
+rankMatrix(fin_x_reg)
+```
+
+
+* Rank of the matrix (87) is less than the number of columns. This will cause errors running Arima or auto.arima. So need to eliminate that.
+
+```{r}
+
+constant_cols <- names(fin_train[, sapply(fin_train, function(v) var(v, na.rm=TRUE)==0)])
+constant_cols
+str(constant_cols)
+```
+
+* Will exclude these columns for further analysis
+
+```{r}
+fin_train <- fin_train[, !colnames(fin_train) %in% constant_cols]
+fin_test <- fin_test[, !colnames(fin_test) %in% constant_cols]
+
+
+#confirming if that fixes the rank issue
+rankMatrix(as.matrix(subset(fin_train, select = -c(y1, y2))))
+```
+
+* now creating separate dataframes for y1 and y2
+
+```{r}
+
+y1_train <- subset(fin_train, select = -y2)
+y1_test <- subset(fin_test, select = -y2)
+y2_train <- subset(fin_train, select = -y1)
+y2_test <- subset(fin_test, select = -y1)
+
+
+```
+
+
+##MODEL BUILDING
+
+##ARIMA with no transformation 
+*ACF
+
+```{r}
+
+acf(y1ts)
+
+
+```
+
+ACF shows that there's 4 significant lags so we can use non-seasonal q = 4
+
+*PACF
+
+```{r}
+pacf(y1ts)
+
+```
+
+PACF indicates 5 significant lags, so we can use non seasonal p = 5
+
+* Check if we need to difference
+
+```{r}
+ndiffs(y1ts)
+nsdiffs(y1ts)
+```
+
+* No need to difference
+
+###First we will build a basic Arima(5,0,4) model without any xregs
+* Premise here is that previous values of y1 are strongest predictors for future y1
+
+```{r}
+arima1 <- Arima(y = y1ts, order = c(5,0,4))
+arima1
+```
+
+*Predictions with arima1
+
+```{r}
+arima1preds <- forecast(object = arima1, h = nrow(y1_test))
+
+plot(arima1preds)
+```
+
+
+* Performance Metrics for arima1
+
+```{r}
+accuracy(arima1preds, y1_test$y1)
+
+```
+
+*Getting a MAPE of 154.59 with training set and 140.37 with test set.
+
+##Now Arima with xregs (all columns)
+
+```{r}
+arima2 <- Arima(y = y1ts, order= c(5,0,4), xreg = subset(y1_train, select = -y1))
+```
+
+* Getting the error shown above.
+
+###So Arima with all xregs in the dataset doesn't work. We will have to find out which columns to include.
+For that, using StepAIC. IN that process, we will also evaluate the performance of OLS.
+
+##StepAIC
+###First with OLS
+```{r}
+
+
+base_linreg <- lm(y1 ~ ., data = y1_train)
+base_linreg
+```
+
+###Predictions with OLS and its performance
+
+```{r}
+
+ols_all_preds <- predict(base_linreg, y1_test)
+
+print('Error metrics for Train data')
+print(regr.eval(ols_all_preds, y1_train$y1))
+print("")
+print('Error metrics for Test data')
+print(regr.eval(ols_all_preds, y1_test$y1))
+```
+
+###OLS with all variables is giving a MAPE of 2.34 with Training data and 0.99 with Test Data!!!
+
+* Let's see if StepAIC can do better
+
+```{r}
+library(MASS)
+aicoptions <- stepAIC(base_linreg, direction = "both")
+```
+
+
+####Based on stepAIC, will use only the following regressors:
+
+lm(formula = y1 ~ d_0 + d_1 + d_4 + f_16 + f_18 + f_20 + f_21 + 
+    f_29 + f_34 + f_39 + f_40 + f_48 + f_49 + f_52 + f_58 + t_2 + 
+    t_6 + t_24 + t_25 + t_34 + t_39 + t_43 + t_44 + f_33 + f_9 + 
+    f_19 + t_14, data = y1_train)
+    
+    
+```{r}
+colnames(aicoptions$model)
+
+myfactors <- colnames(aicoptions$model)
+myfactors
+myfactors <- myfactors[-1]
+myfactors
+
+#reformulate(termlabels = listoffactors, response = 'y')
+lmformula <- reformulate(termlabels = myfactors, response = "y1")
+lmformula
+aic_rec_mdl <- lm(formula = lmformula, data = y1_train)
+
+
+aic_rec_mdl
+```
+
+```{r}
+aic_preds <- predict(aic_rec_mdl, y1_test)
+
+print('Error metrics for Train data')
+print(regr.eval(aic_preds, y1_train$y1))
+print("")
+print('Error metrics for Test data')
+print(regr.eval(aic_preds, y1_test$y1))
+
+
+
+```
+
+* WIth StepAIC recommended model MAPE on training went up to 3.2 and on test went up to 1.09
+
+
+##Now we will try Arima with regressors based on StepAIC recommended regressors
+
+```{r}
+
+new_y1_xreg <- subset(y1_train[, colnames(aic_rec_mdl$model)], select = -y1)
+
+arima3 <- Arima(y = y1ts, order = c(5,0,4), xreg = new_y1_xreg)
+
+arima3_preds <- forecast(object = arima3, h = nrow(y1_test), xreg = new_y1_xreg)
+print(accuracy(arima3_preds,y1_test$y1))
+
+plot(arima3_preds)
+
+
+```
+
+* Looks like regressors have made the predictions worse. MAPE is 1064.665 for training set and 354.393 for test set.
+
+
+ACF and PACF of residuals
+
+```{r}
+acf(arima3$residuals)
+```
+```{r}
+pacf(arima3$residuals)
+```
+
+#Trying with auto.arima
+
+```{r}
+
+arima4 <- auto.arima(y = y1ts, xreg = new_y1_xreg)
+
+
+arima4
+
+arima4_preds <- forecast(object = arima4, h = nrow(y1_test), xreg = new_y1_xreg)
+print(accuracy(arima4_preds,y1_test$y1))
+
+plot(arima4_preds)
+
+```
+
+Not much improvement in MAPE with AutoArima suggested (3,0,0)
+
+##Seeing the performance of LASSO
+
+###First will try a LASSO model with all variables
+
+```{r}
+library(glmnet)
+set.seed(1234)
+
+cv_lasso <- cv.glmnet(as.matrix(subset(y1_train, select = -y1)), as.matrix(y1_train$y1), alpha = 1, type.measure = "mae", nfolds = 4)
+par(mfrow=c(1,2))
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE)
+par(mfrow=c(1,1))
+
+
+```
+
+* Now using the min lambda, running lasso regression
+
+```{r}
+lasso_1 <- glmnet(x = as.matrix(subset(y1_train, select = -y1)), y = as.matrix(y1_train$y1), alpha = 1, lambda = cv_lasso$lambda.min)
+
+lasso_1_preds <- predict(lasso_1, as.matrix(subset(y1_test, select = -y1)))
+regr.eval(lasso_1_preds, y1_test$y1)
+
+
+```
+
+* This gives a MAPE of 8.85% on test data
+
+###Now trying LASSO with the set of variables from StepAIC
+
+```{r}
+new_y1_xreg
+X_train = as.matrix(new_y1_xreg)
+
+X_test <- as.matrix(subset(y1_test[, colnames(aic_rec_mdl$model)], select = -y1))
+
+cv_lasso_1 <- cv.glmnet(X_train, as.matrix(y1_train$y1), alpha = 1, type.measure = "mse", nfolds = 4)
+
+par(mfrow=c(1,2))
+plot(cv_lasso_1)
+plot(cv_lasso_1$glmnet.fit, xvar = 'lambda', label = TRUE)
+par(mfrow=c(1,2))
+
+
+
+```
+
+
+
+```{r}
+lasso_2 <- glmnet(X_train, as.matrix(y1_train$y1), lambda = cv_lasso_1$lambda.min, alpha = 1)
+
+lasso_2_preds <- predict(lasso_2, X_test)
+
+regr.eval(lasso_2_preds, y1_test$y1)
+```
+
+MAPE with this LASSO model gives a mape of 1.10
+
+
+###refactor below
+
+* The target variable y1 is a percent change. Will use another column to get a price so that
+* it is easier to see trend and forecast
+
+
+
+```{r}
+
+setdailyprice <- function(daily_price) {
+  retprice <- daily_price
+  for(i in 1:length(daily_price)) {
+    if (i == 1) {
+      retprice[i] = 1000
+    } else {
+      retprice[i] = retprice[i-1]*(1+ daily_price[i])
+    }
+
+  }
+  return(retprice)
+}
+
+fin_data$DailyPrice <- setdailyprice(fin_data$y1)
+head(fin_data)
+
+
+```
+
+
+
+
 * To see if there's a seasonality at all, taking weekly average first (then monthly average)
 * and decomposing.
 
@@ -290,136 +595,10 @@ fin_train$WeekOfYear = NULL
 ## Initial Model
 * For this, we need to first create a matrix of all regressors
 
-```{r}
-library(Matrix)
-fin_x_reg <- subset(fin_train, select = -c(y1, y2))
-
-nrow(fin_x_reg)
-ncol(fin_x_reg)
-rankMatrix(fin_x_reg)
-```
-
-
-* Rank of the matrix (87) is less than the number of columns. This will cause errors running Arima or auto.arima. So need to eliminate that.
-
-```{r}
-
-names(fin_train[, sapply(fin_train, function(v) var(v, na.rm=TRUE)==0)])
-for(col in names(fin_data)) {
-  if (is.constant(fin_data[, col])) {
-    print(col)
-  }
-}
-```
-
-* Will exclude these columns for further analysis
-
-```{r}
-fin_train <- subset(fin_train, select = -c(t_9, t_16, t_22))
-fin_test <- subset(fin_test, select = -c(t_9, t_16, t_22))
-
-
-ncol(subset(fin_train, select = -c(y1, y2)))
-#confirming if that fixes the rank issue
-rankMatrix(as.matrix(subset(fin_train, select = -c(y1, y2))))
-```
-
 * Trying StepAIC to identify significant regressors
 
-* now creating separate dataframes for y1 and y2
-
-```{r}
-
-y1_train <- subset(fin_train, select = -y2)
-y1_test <- subset(fin_test, select = -y2)
-y2_train <- subset(fin_train, select = -y1)
-y2_test <- subset(fin_test, select = -y1)
 
 
-```
-
-```{r}
-
-
-base_linreg <- lm(y1 ~ ., data = y1_train)
-base_linreg
-```
-
-* since there are several variables, using stepAIC to see if we can reduce the number of coefficients keeping significant ones
-
-
-```{r}
-
-ols_all_preds <- predict(base_linreg, y1_test)
-
-print('Error metrics for Train data')
-print(regr.eval(ols_all_preds, y1_train$y1))
-print("")
-print('Error metrics for Test data')
-print(regr.eval(ols_all_preds, y1_test$y1))
-```
-
-```{r}
-library(MASS)
-stepAIC(base_linreg, direction = "both")
-```
-
-
-####Based on stepAIC, will use only the following regressors:
-
-d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44
-    
-    
-```{r}
-aic_rec_mdl <- lm(formula = y1 ~ d_0 + d_1 + d_2 + d_3 + d_4 + f_0 + f_5 + f_7 + 
-    f_8 + f_9 + f_11 + f_13 + f_14 + f_15 + f_16 + f_18 + f_19 + 
-    f_20 + f_22 + f_23 + f_24 + f_29 + f_30 + f_32 + f_33 + f_34 + 
-    f_36 + f_37 + f_39 + f_40 + f_41 + f_42 + f_43 + f_44 + f_46 + 
-    f_48 + f_49 + f_50 + f_51 + f_52 + f_53 + f_54 + f_56 + f_58 + 
-    f_59 + f_60 + f_62 + t_0 + t_2 + t_3 + t_6 + t_7 + t_11 + 
-    t_12 + t_14 + t_17 + t_18 + t_19 + t_21 + t_24 + t_25 + t_27 + 
-    t_29 + t_32 + t_33 + t_34 + t_35 + t_36 + t_37 + t_38 + t_39 + 
-    t_40 + t_43 + t_44, data = y1_train)
-
-
-aic_rec_mdl
-```
-
-```{r}
-aic_preds <- predict(aic_rec_mdl, y1_test)
-
-regr.eval(aic_preds, y1_train$y1)
-regr.eval(aic_preds, y1_test$y1)
-
-```
-
-```{r}
-library(glmnet)
-set.seed(1234)
-
-names(y1_train)
-cv_lasso <- cv.glmnet(as.matrix(subset(y1_train, select = -y1)), as.matrix(y1_train$y1), alpha = 1, type.measure = "mae", nfolds = 4)
-plot(cv_lasso)
-plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE)
-
-lasso_1 <- glmnet(x = as.matrix(subset(y1_train, select = -y1)), y = as.matrix(y1_train$y1), alpha = 1, lambda = cv_lasso$lambda.min)
-
-lasso_1_preds <- predict(lasso_1, as.matrix(subset(y1_test, select = -y1)))
-regr.eval(lasso_1_preds, y1_test$y1)
-
-X_train = as.matrix(subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)))
-
-X_test = as.matrix(subset(y1_test, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)))
-cv_lasso_1 <- cv.glmnet(X_train, as.matrix(y1_train$y1), alpha = 1, type.measure = "mse", nfolds = 4)
-plot(cv_lasso_1)
-
-cv_lasso_2 <- glmnet(X_train, as.matrix(y1_train$y1), lambda = cv_lasso_1$lambda.min, alpha = 1)
-
-cv_lasso_2_preds <- predict(cv_lasso_2, X_test)
-
-regr.eval(cv_lasso_2_preds, y1_test$y1)
-
-```
 
 #### Assessing the colinearity
 
@@ -431,44 +610,6 @@ library('corrplot')
 
 
 corrplot(cor(subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), use = "complete.obs"), method = "number")
-
-```
-
-
-* checking if we need to stationarize
-```{r}
-
-acf(y1ts)
-pacf(y1ts)
-
-ndiffs(y1ts)
-
-```
-
-* No need to difference as the variance seems to be stationary.
-
-```{r}
-
-arima2 <- Arima(y = y1ts, order = c(2,0,0), xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), include.drift = TRUE)
-
-arima1 <- Arima(y = y1ts, order = c(2,0,1))
-
-
-arima1_preds <- forecast(object = arima1, h = nrow(y1_test))
-accuracy(arima1_preds,y1_test$y1)
-
-plot(arima1_preds)
-
-
-
-fin_arima1 <- auto.arima(y1ts, xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), allowdrift = TRUE)
-fin_arima1
-```
-
-
-```{r}
-auto_arima_preds <- forecast(object = fin_arima1, h = nrow(y1_test), xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)))
-accuracy(auto_arima_preds, y1_test$y1)
 
 ```
 
