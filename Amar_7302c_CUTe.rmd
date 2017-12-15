@@ -46,7 +46,7 @@ library(zoo)
 
 * set working directory
 ```{r}
-setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
+setwd('C:/Users/212629693/Documents/Personal/ds-classes/INSOFE_Batch35_7302c_CUTe_Team17')
 
 ```
 
@@ -63,7 +63,6 @@ head(fin_data_orig)
 ```{r}
 cat_attrs <- c('y2')
 num_attrs <- setdiff(colnames(fin_data_orig), cat_attrs)
-num_attrs
 
 fin_data_orig[cat_attrs] <- data.frame(sapply(fin_data_orig[cat_attrs], as.factor))
 str(fin_data_orig, list.len = ncol(fin_data_orig))
@@ -87,7 +86,7 @@ summary(fin_data_orig)
 ## Preprocessing
 ### Empty Columns
 
-  * Following columns are completely blank in the data frame.
+  * Following columns are completely blank (column with all NA values) in the data frame.
 
 ```{r}
 emptycols <- colnames(fin_data_orig[,sapply(fin_data_orig, function(x) { all(is.na(x))})])
@@ -129,29 +128,68 @@ fin_data <- subset(fin_data,select = -c(f_63, f_27, f_3, f_28, f_31, f_35, f_25,
 ```
 
 ### convert timestamp to date
-* The timestamps are given as day numbers starting with 14. We have observations for 1782 days = 4.88 years of data. 
-* Generating dates from 2013
+* The timestamps are given as day numbers starting with 14. We have observations for 1769 days (approx 4.8 years of data)
+
+* Generating dates from 2012 and setting that as the id columns
 ```{r}
 origindate <- as.Date('2011-12-31', format = '%Y-%m-%d')
 origindate
 fin_data$timestamp = as.Date(fin_data$timestamp, origindate)
+rownames(fin_data) <- fin_data$timestamp
 
+#removing timestamp column
+fin_data$timestamp <- NULL
 head(fin_data)
 tail(fin_data)
 ```
 
-### Train-test split
+* checking if there're any sparse columns (ie columns with very large number of zeros)
 
 ```{r}
-fin_train <- fin_data[which(fin_data$timestamp <= as.Date('2014-12-31', format = '%Y-%m-%d')), ]
-fin_test <- fin_data[which(fin_data$timestamp > as.Date('2014-12-31', format = '%Y-%m-%d')), ]
+sort(colSums(fin_data == 0), decreasing = TRUE)
 
 ```
 
-###Imputation
+* from the above we can see that t_10, t_13, t_30, t_20 all have very large number of 0s. Checking to see if these are factors
 
 ```{r}
-preproc_preds <- preProcess(x = select(fin_train, -timestamp, -y1, -y2), method = c("center", "scale", "knnImpute"))
+tail(fin_data$t_10, 200)
+tail(fin_data$t_13, 200)
+tail(fin_data$t_30, 200)
+tail(fin_data$t_20, 100)
+```
+
+* from looking at the data in these tables, it is clear that these are not factors.
+* since these have very large number of zeros, they cannot have any meaningful impact on the target variables. So removing them.
+
+```{r}
+fin_data <- subset(fin_data, select = -c(t_10, t_13, t_30, t_20))
+
+```
+
+
+
+
+
+
+### Train-test split
+
+```{r}
+
+fin_train <- fin_data[rownames(y1_data) <= as.Date('2014-12-31', format = '%Y-%m-%d'), ]
+
+fin_test <- fin_data[rownames(y1_data) > as.Date('2014-12-31', format = '%Y-%m-%d'), ]
+
+
+```
+
+###Imputation and scaling
+
+```{r}
+
+library(RANN)
+set.seed(1234)
+preproc_preds <- preProcess(x = subset(fin_train, select = -c(y1, y2)), method = c("center", "scale", "knnImpute"))
 
 fin_train <- predict(object = preproc_preds, fin_train)
 fin_test <- predict(object = preproc_preds, fin_test)
@@ -161,7 +199,7 @@ sum(is.na(fin_test))
 ```
 
 ## Assessing fit for Timeseries Forecasting
-* Need to check if y1 exhibits strong trend and some seasonality. If so, we can proceed with timeseries forecasting.
+* Need to check if y1 exhibits strong trend and some seasonality (optionally). If so, we can proceed with timeseries forecasting.
 
 
 
@@ -188,9 +226,9 @@ plot(y1decomp)
 * and decomposing.
 
 ```{r}
-fin_train$Year <- as.numeric(year(fin_train$timestamp))
-fin_train$Month <- as.numeric(month(fin_train$timestamp))
-fin_train$WeekOfYear <- isoweek(fin_train$timestamp)
+fin_train$Year <- as.numeric(year(rownames(fin_train)))
+fin_train$Month <- as.numeric(month(rownames(fin_train)))
+fin_train$WeekOfYear <- isoweek(rownames(fin_train))
 
 fin_train_weekly <- fin_train %>% group_by(Year, Month, WeekOfYear) %>% summarize("WeeklyAvgY1" = mean(y1))
 fin_train_monthly <- fin_train %>% group_by(Year, Month) %>% summarize("MonthlyAvgY1" = mean(y1))
@@ -231,8 +269,8 @@ fin_train$WeekOfYear = NULL
 * For this, we need to first create a matrix of all regressors
 
 ```{r}
-fin_x_reg <- as.matrix(select(fin_train, -y1, -y2, -timestamp))
-library(Matrix)
+
+fin_x_reg <- subset(fin_train, select = -c(y1, y2))
 
 nrow(fin_x_reg)
 ncol(fin_x_reg)
@@ -240,25 +278,54 @@ rankMatrix(fin_x_reg)
 ```
 
 
-* Rank of the matrix (90) is less than the number of columns. This caused errors running Arima or auto.arima.
-* Trying StepAIC to identify significant regressors
+* Rank of the matrix (87) is less than the number of columns. This will cause errors running Arima or auto.arima. So need to eliminate that.
 
 ```{r}
 
-str(fin_train)
-fin_train_y1 <- dplyr::select(fin_train, -timestamp, -y2)
-summary(fin_train_y1)
-base_linreg <- lm(y1 ~ ., data = select(fin_train, -timestamp, -y2))
+names(fin_train[, sapply(fin_train, function(v) var(v, na.rm=TRUE)==0)])
+for(col in names(fin_data)) {
+  if (is.constant(fin_data[, col])) {
+    print(col)
+  }
+}
+```
+
+* Will exclude these columns for further analysis
+
+```{r}
+fin_train <- subset(fin_train, select = -c(t_9, t_16, t_22))
+
+ncol(subset(fin_train, select = -c(y1, y2)))
+#confirming if that fixes the rank issue
+rankMatrix(as.matrix(subset(fin_train, select = -c(y1, y2))))
+```
+
+* Trying StepAIC to identify significant regressors
+
+* now creating separate dataframes for y1 and y2
+
+```{r}
+
+y1_train <- subset(fin_train, select = -y2)
+y2_train <- subset(fin_train, select = -y1)
+
+
+```
+
+```{r}
+
+
+base_linreg <- lm(y1 ~ ., data = y1_train)
 base_linreg
 ```
 
+* since there are several variables, using stepAIC to see if we can reduce the number of coefficients keeping significant ones
 ```{r}
 library(MASS)
 stepAIC(base_linreg, direction = "both")
 ```
 
 
-* Based on PACF, setting a P of 4.
 
 * checking if we need to stationarize
 ```{r}
@@ -274,8 +341,12 @@ ndiffs(y1ts)
 
 ```{r}
 
-fin_arima1 <- auto.arima(y1ts, xreg = select(fin_train, -timestamp, -y1, -y2), )
+arima1 <- Arima(y = y1ts, order = c(5,0,0))
 
+arima1
+
+fin_arima1 <- auto.arima(y1ts)
+fin_arima1
 ```
 
 
