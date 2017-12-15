@@ -326,6 +326,21 @@ stepAIC(base_linreg, direction = "both")
 ```
 
 
+####Based on stepAIC, will use only the following regressors:
+
+d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44
+    
+
+#### Assessing the colinearity
+
+```{r}
+library('corrplot')
+
+
+corrplot(cor(subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), use = "complete.obs"), method = "color")
+
+```
+
 
 * checking if we need to stationarize
 ```{r}
@@ -341,7 +356,7 @@ ndiffs(y1ts)
 
 ```{r}
 
-arima1 <- Arima(y = y1ts, order = c(5,0,0))
+arima1 <- Arima(y = y1ts, order = c(5,0,0), xreg = subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), include.drift = TRUE)
 
 arima1
 
