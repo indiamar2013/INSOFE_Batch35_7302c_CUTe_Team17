@@ -250,6 +250,9 @@ str(constant_cols)
 fin_train <- fin_train[, !colnames(fin_train) %in% constant_cols]
 fin_test <- fin_test[, !colnames(fin_test) %in% constant_cols]
 
+##also updating the original set
+fin_data <- fin_data[, !colnames(fin_data) %in% constant_cols]
+
 
 #confirming if that fixes the rank issue
 rankMatrix(as.matrix(subset(fin_train, select = -c(y1, y2))))
@@ -557,11 +560,32 @@ head(fin_data$DailyPrice, 10)
 
 ```
 
+
+###Train-Test sets with this new variable
+
+```{r}
+fin_data1 <- fin_data
+
+fin_data1$DailyPrice <- setdailyprice(fin_data$y1)
+
+train_rows <- 1:round(nrow(fin_data)*0.7)
+
+fin_train1 <- fin_data[train_rows, ]
+
+fin_test1 <- fin_data[-train_rows, ]
+
+dp_train1 <- subset(fin_train1, select = c(-y1, -y2))
+dp_test1 <- subset(fin_test1, select = c(-y1, -y2))
+
+
+```
+
+
 * Now we can create a new timeseries using this variable
 
 ```{r}
 
-dailyprice_ts <- ts(setdailyprice(fin_train$y1), start = c(2010, 1,1), frequency = 252)
+dailyprice_ts <- ts(fin_train1$DailyPrice, start = c(2010, 1,1), frequency = 252)
 plot(dailyprice_ts)
 ```
 
@@ -606,16 +630,26 @@ arima5
 
 arima5_preds <- forecast(arima5, h = nrow(y1_test))
 plot(arima5_preds)
-print(accuracy(arima5_preds, setdailyprice(y1_test$y1)))
+print(accuracy(arima5_preds, dp_test1$DailyPrice))
 
 
 ```
 
-This model did very well with Training set (MAPE of 1.97) but poorly against the test set where the MAPE was 357.39
+This model did very well with Training set (MAPE of 1.97) but not as good against the test set where the MAPE was 13.09
 
 * How about the Regressors?
 
 ```{r}
-arima6 <- auto.arima(dailyprice_ts, xreg = new_y1_xreg)
+arima6 <- auto.arima(dailyprice_ts, xreg = new_y1_xreg, allowdrift = TRUE)
+arima6
+```
+
+Predictions and Performance
+```{r}
+
+arima6_preds <- forecast(arima6, h = nrow(new_y1_test), xreg = new_y1_xreg)
+plot(arima6_preds)
+accuracy(arima6_preds, dp_test1$DailyPrice)
+
 ```
 
