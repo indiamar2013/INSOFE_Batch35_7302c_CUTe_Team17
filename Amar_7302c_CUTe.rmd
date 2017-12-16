@@ -198,12 +198,12 @@ sum(is.na(fin_test))
 ```
 
 ## Assessing fit for Timeseries Forecasting
-* Need to check if y1 exhibits strong trend and some seasonality (optionally). If so, we can proceed with timeseries forecasting.
+* Need to check if y1 exhibits strong trend and some seasonality (optionally). If so, we can proceed with timeseries forecasting. We will assume 252 trading days in a year, so we have to start the series from 2010 Jan 1
 
 
 
 ```{r}
-y1ts <- ts(fin_train$y1, start = c(2012, 1,1), frequency = 365.25)
+y1ts <- ts(fin_train$y1, start = c(2010, 1,1), frequency = 252)
 plot(y1ts,
      type="l",
      lwd=2,
@@ -464,7 +464,7 @@ Not much improvement in MAPE with AutoArima suggested (3,0,0)
 library(glmnet)
 set.seed(1234)
 
-cv_lasso <- cv.glmnet(as.matrix(subset(y1_train, select = -y1)), as.matrix(y1_train$y1), alpha = 1, type.measure = "mae", nfolds = 4)
+cv_lasso <- cv.glmnet(as.matrix(subset(y1_train, select = -y1)), as.matrix(y1_train$y1), alpha = 1, type.measure = "deviance", nfolds = 4)
 par(mfrow=c(1,2))
 plot(cv_lasso)
 plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE)
@@ -476,7 +476,7 @@ par(mfrow=c(1,1))
 * Now using the min lambda, running lasso regression
 
 ```{r}
-lasso_1 <- glmnet(x = as.matrix(subset(y1_train, select = -y1)), y = as.matrix(y1_train$y1), alpha = 1, lambda = cv_lasso$lambda.min)
+lasso_1 <- glmnet(x = as.matrix(subset(y1_train, select = -y1)), y = as.matrix(y1_train$y1), family = "gaussian", alpha = 1, lambda = cv_lasso$lambda.min)
 
 lasso_1_preds <- predict(lasso_1, as.matrix(subset(y1_test, select = -y1)))
 regr.eval(lasso_1_preds, y1_test$y1)
@@ -484,7 +484,7 @@ regr.eval(lasso_1_preds, y1_test$y1)
 
 ```
 
-* This gives a MAPE of 8.85% on test data
+* This gives a MAPE of 9.38 on test data
 
 ###Now trying LASSO with the set of variables from StepAIC
 
@@ -494,7 +494,7 @@ X_train = as.matrix(new_y1_xreg)
 
 X_test <- as.matrix(subset(y1_test[, colnames(aic_rec_mdl$model)], select = -y1))
 
-cv_lasso_1 <- cv.glmnet(X_train, as.matrix(y1_train$y1), alpha = 1, type.measure = "mse", nfolds = 4)
+cv_lasso_1 <- cv.glmnet(X_train, as.matrix(y1_train$y1), alpha = 1, type.measure = "deviance", nfolds = 4)
 
 par(mfrow=c(1,2))
 plot(cv_lasso_1)
@@ -508,30 +508,41 @@ par(mfrow=c(1,2))
 
 
 ```{r}
-lasso_2 <- glmnet(X_train, as.matrix(y1_train$y1), lambda = cv_lasso_1$lambda.min, alpha = 1)
+lasso_2 <- glmnet(X_train, as.matrix(y1_train$y1), family = "gaussian", lambda = cv_lasso_1$lambda.min, alpha = 1)
 
 lasso_2_preds <- predict(lasso_2, X_test)
 
 regr.eval(lasso_2_preds, y1_test$y1)
 ```
 
-MAPE with this LASSO model gives a mape of 1.10
+MAPE with this LASSO model gives a mape of 1.09
 
 
 ###refactor below
 
-* The target variable y1 is a percent change. Will use another column to get a price so that
-* it is easier to see trend and forecast
 
 
+
+
+
+
+#ARIMA Revisited
+###This is inspired by the discussion with Vamshi Anand (Batch 35). All credit
+to him if this works out to be a better model
+
+* The previous models with ARIMA were quite poorly performing. The response variable y1 is a daily percentage change. Hence the trend was quite linear and flat.
+
+*The idea is what if we instead create a new response variable that is actually the price based on the price change. Can we see a trend and seasonality that would in turn give a better model?
+
+* Let's create a new column DailyPrice that is an actual value that is previous day's value * percent change for the day.First day's price is set to 100 as a base.
 
 ```{r}
-
+#function to help set the daily price.
 setdailyprice <- function(daily_price) {
   retprice <- daily_price
   for(i in 1:length(daily_price)) {
     if (i == 1) {
-      retprice[i] = 1000
+      retprice[i] = 100
     } else {
       retprice[i] = retprice[i-1]*(1+ daily_price[i])
     }
@@ -540,81 +551,71 @@ setdailyprice <- function(daily_price) {
   return(retprice)
 }
 
-fin_data$DailyPrice <- setdailyprice(fin_data$y1)
-head(fin_data)
+fin_train$DailyPrice <- setdailyprice(fin_data$y1)
+head(fin_data$DailyPrice, 10)
 
 
 ```
 
-
-
-
-* To see if there's a seasonality at all, taking weekly average first (then monthly average)
-* and decomposing.
-
-```{r}
-fin_train$Year <- as.numeric(year(rownames(fin_train)))
-fin_train$Month <- as.numeric(month(rownames(fin_train)))
-fin_train$WeekOfYear <- isoweek(rownames(fin_train))
-
-fin_train_weekly <- fin_train %>% group_by(Year, Month, WeekOfYear) %>% summarize("WeeklyAvgY1" = mean(y1))
-fin_train_monthly <- fin_train %>% group_by(Year, Month) %>% summarize("MonthlyAvgY1" = mean(y1))
-
-```
-
+* Now we can create a new timeseries using this variable
 
 ```{r}
 
-
-weeklyy1ts <- ts(fin_train_weekly$WeeklyAvgY1, start = c(2012, 1,1), frequency = 52)
-plot(decompose(weeklyy1ts))
+dailyprice_ts <- ts(setdailyprice(fin_train$y1), start = c(2010, 1,1), frequency = 252)
+plot(dailyprice_ts)
 ```
-
 
 ```{r}
-monthlyy1ts <- ts(fin_train_monthly$MonthlyAvgY1, start = c(2012, 1,1), frequency = 12)
-plot(decompose(monthlyy1ts))
+plot(decompose(dailyprice_ts))
+
 ```
 
-### Observations:
-Based on the above, it is clear that there's no clear seasonality that affects the daily percent change in the value of y1. Consequently will not do a Seasonal TS forecasting
+*Let's see if we need to difference anything
 
 ```{r}
-#Cleaning up Year, Month, and WeekOfYear column as we won't need that.
-
-fin_train$Year = NULL
-fin_train$Month = NULL
-fin_train$WeekOfYear = NULL
-
+print(ndiffs(dailyprice_ts))
+print(nsdiffs(dailyprice_ts))
 ```
 
+We need to add one non-seasonal difference
 
-
-
-
-## Initial Model
-* For this, we need to first create a matrix of all regressors
-
-* Trying StepAIC to identify significant regressors
-
-
-
-
-#### Assessing the colinearity
+ACF
 
 ```{r}
-library(car)
-vif(mod = base_linreg)
+acf(dailyprice_ts, lag.max = 30)
+```
 
-library('corrplot')
+ACF shows that it is a very slow decay and strong connect evey beyond 
+PACF
 
+```{r}
+pacf(dailyprice_ts, lag.max = 30)
+```
 
-corrplot(cor(subset(y1_train, select= c(d_0, d_1, d_2, d_3, d_4, f_0, f_5, f_7, f_8, f_9, f_11, f_13, f_14, f_15, f_16, f_18,  f_19, f_20 , f_22 , f_23 , f_24 , f_29 , f_30 , f_32 , f_33 , f_34 , f_36 , f_37 , f_39 , f_40 , f_41 , f_42 , f_43 , f_44 , f_46 , f_48 , f_49 , f_50 , f_51 , f_52 , f_53 , f_54 , f_56 , f_58 , f_59 , f_60 , f_62 , t_0 , t_2 , t_3 , t_6 , t_7 , t_11 , t_12 , t_14 , t_17 , t_18 , t_19 , t_21 , t_24 , t_25 , t_27 , t_29 , t_32 , t_33 , t_34 , t_35 , t_36 , t_37 , t_38 , t_39 , t_40 , t_43 , t_44)), use = "complete.obs"), method = "number")
+Will let auto arima pick the right values
+
+* First just DailyPrice (ie no xregs)
+```{r}
+
+arima5 <- auto.arima(y = dailyprice_ts)
+arima5
 
 ```
 
+```{r}
 
-## Final Model
-## Predictions
-## Performance
+arima5_preds <- forecast(arima5, h = nrow(y1_test))
+plot(arima5_preds)
+print(accuracy(arima5_preds, setdailyprice(y1_test$y1)))
+
+
+```
+
+This model did very well with Training set (MAPE of 1.97) but poorly against the test set where the MAPE was 357.39
+
+* How about the Regressors?
+
+```{r}
+arima6 <- auto.arima(dailyprice_ts, xreg = new_y1_xreg)
+```
 
