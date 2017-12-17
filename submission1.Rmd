@@ -1,0 +1,511 @@
+---
+title: "Team17_CSE7302c_CUTe"
+author: "Amar Rao"
+date: "December 16, 2017"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    theme: united
+    highlight: tang
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+    code_folding: hide
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+#clear all environment and session variables
+rm(list = ls(all = TRUE))
+
+
+```
+
+
+Libraries
+```{r}
+
+library(knitr)
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(DMwR)
+library(forecast)
+library(lubridate)
+library(imputeTS)
+library(TTR)
+library(graphics)
+library(zoo)
+```
+
+## Reading data
+
+* set working directory
+```{r}
+setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
+
+```
+
+### Load the data set
+
+```{r}
+fin_data_orig <- read.csv('Datasets/train_data.csv', header = TRUE, sep = ',', na.strings = "", colClasses = "double", numerals = "no.loss")
+
+```
+
+```{r}
+str(fin_data_orig, list.len = ncol(fin_data_orig))
+head(fin_data_orig)
+```
+
+
+###Observations:
+
+* There're 109 regressors and 2 target variables (y1 and y2) and 1769 observations
+* Data appears to already have been scaled and standardized. 
+* There are a few empty columns (ie all rows are blank in these columns )
+* Some values are missing in other columns
+* Timestamp starts as a day number at 14 and goes up to 1782 days (1769 days in total). That is almost 7 hears of data.
+* I will only use data for the last 2 years = 504 observations
+
+
+
+## Preprocessing
+
+```{r}
+
+start_row <- nrow(fin_data_orig)-252
+
+
+
+fin_data_orig <- fin_data_orig[start_row:nrow(fin_data_orig), ]
+fin_data_orig
+str(fin_data_orig)
+```
+
+### Empty Columns
+
+  * Following columns are completely blank (column with all NA values) in the data frame.
+
+```{r}
+
+emptycols <- colnames(fin_data_orig[,sapply(fin_data_orig, function(x) { all(is.na(x))})])
+emptycols
+
+
+```
+
+
+*Removing these columns
+
+```{r}
+fin_data <- fin_data_orig[, !colnames(fin_data_orig) %in% emptycols]
+
+```
+
+
+### Handle NAs
+
+* Checking how spread the NAs are in other columns and selecting columns that have more than 25% NAs to remove
+```{r}
+
+colswithna <- sort(colSums(is.na(fin_data)), decreasing = TRUE)
+
+nacolstoremove <- colswithna[colswithna > nrow(fin_data)*0.05]
+nacolstoremove
+```
+
+####So removing those columns. Will use knnImputation for the rest once I do the test-train split.
+
+```{r}
+fin_data <- fin_data[, !colnames(fin_data) %in% names(nacolstoremove)]
+str(fin_data)
+```
+
+* checking if there're any sparse columns (ie columns with very large number of zeros)
+
+```{r}
+sparsecols <- sort(colSums(fin_data[,!colnames(fin_data) %in% c("y1", "y2")] == 0), decreasing = TRUE)
+colstoremove <- sparsecols[sparsecols > round(nrow(fin_data) * 0.25)]
+colstoremove
+```
+
+
+* since these have very large number of zeros, they cannot have any meaningful impact on the target variables. So removing them.
+
+```{r}
+fin_data <- fin_data[, !colnames(fin_data) %in% names(colstoremove)]
+
+str(fin_data)
+```
+
+We don't need the timestamp column. Removing it
+
+```{r}
+
+rownames(fin_data) <- fin_data$timestamp
+fin_data$timestamp <- NULL
+head(fin_data)
+```
+
+
+
+### Train-test split
+
+```{r}
+#Since this is chronological data, we cannot do random sampling.
+# Setting the first 70% to train and last 30% to test
+rows = seq(1, nrow(fin_data),1)
+set.seed(1234) #this ensures teh same output can be obtained when running
+train_rows = sample(rows,(0.90*nrow(fin_data)))
+
+fin_train <- fin_data[train_rows, ]
+
+fin_test <- fin_data[-train_rows, ]
+
+```
+
+
+###Imputation
+
+
+### Checking for rank deficiency and removing stationary columns (columns with no variance)
+
+```{r}
+
+
+constant_cols <- colnames(fin_data[ , sapply(fin_data, function(v){ var(v, na.rm=TRUE)==0})])
+constant_cols
+fin_data <- fin_data[, !colnames(fin_data) %in% constant_cols]
+str(fin_data)
+```
+```{r}
+
+sum(is.na(fin_data))
+library(RANN)
+
+set.seed(1234)
+
+preproc_preds <- preProcess(x = subset(fin_data, select = -c(y1, y2)), method = c("knnImpute"))
+fin_data <- predict(preproc_preds, fin_data)
+
+sum(is.na(fin_data))
+
+```
+
+
+## scaling
+
+```{r}
+
+#scale_preds <- preProcess(x = subset(fin_train, select = -c(y1, y2), method = c("center", "scale")))
+#fin_train <- predict(object = scale_preds, fin_train)
+#fin_test <- predict(object = scale_preds, fin_test)
+
+```
+
+
+* now creating separate dataframes for y1 and y2
+
+```{r}
+
+
+y1_data <- subset(fin_data, select = -y2)
+
+
+sum(is.na(y1_data))
+```
+
+###First with OLS
+```{r}
+
+base_linreg <- lm(y1 ~ ., data = y1_data)
+
+summary(base_linreg)
+par(mfrow=c(2,2))
+plot(base_linreg)
+par(mfrow=c(2,2))
+
+```
+
+
+##Predictions
+```{r}
+ols_all_preds <- predict(base_linreg, y1_data)
+
+print('Error metrics for Train data')
+print(regr.eval(ols_all_preds, y1_data$y1))
+print("")
+
+```
+
+#Predictions with unseen test data
+
+```{r}
+
+
+unseen_data <- read.csv('Datasets/test_data.csv')
+rownames(unseen_data) <- unseen_data$timestamp
+
+test_xregs <- unseen_data[, colnames(unseen_data) %in% colnames(y1_data)]
+
+test_preds1 <- predict(object = base_linreg, newdata = test_xregs)
+
+test_preds1
+```
+
+
+```{r}
+write.csv(test_preds1, file = 'prediction.csv')
+```
+
+
+###Transforming
+
+
+
+```{r}
+#function to help set the daily price.
+setdailyprice <- function(daily_price) {
+  retprice <- daily_price
+  for(i in 1:length(daily_price)) {
+    if (i == 1) {
+      retprice[i] = 1
+    } else {
+      retprice[i] = (retprice[i-1]*(1+ daily_price[i]))
+    }
+
+  }
+  return(retprice)
+}
+
+
+
+```
+
+```{r}
+
+new_y1_data <- y1_data
+new_y1_data$newy1 <- cbind(setdailyprice(y1_data$y1))
+new_y1_data <- subset(new_y1_data, select = -c(y1))
+str(new_y1_data)
+```
+
+newy1 ~ f_5+f_24+f_25+f_28+t_24+t_28+t_31+t_41
+newy1 ~ f_5+f_24+f_25+f_28+t_24+t_28+t_31+t_41+f_46+f_44+f_35+f_31+f_16
+f_5+f_24+f_25+f_28+t_24+t_28+t_31+t_41+f_46+f_44+f_35+f_31+f_16
+
+```{r}
+#new_y1_data1 <- new_y1_data[, !colnames(new_y1_data) %in% c('t_43', 't_40', 't_39','t_34','t_35','t_36','t_29','f_58','f_51','f_52','f_40')]
+
+mdl2 <- lm(newy1 ~ ., data = new_y1_data)
+summary(mdl2)
+par(mfrow = c(2,2))
+plot(mdl2)
+par(mfrow = c(1,1))
+tail(predict(object = mdl2, newdata = new_y1_data))
+```
+
+t_43, t_40, t_39,t_34,t_35,t_36,t_29,f_58,f_51,f_52,f_40
+
+newy1 ~ f_5+f_24+f_25+f_28+t_24+t_28+t_31+t_41+f_46+f_44+f_35+f_31+f_16
+newy1 ~ f_5 + f_25 + f_28 + t_24 + t_28 + t_31 + t_41 + f_46 + f_44 + f_31 + f_16
+
+d_2+f5+f_24+f_25+f_28+f_47+t_5+t_24+t_28+t_29+t_41 
+
+f_16, f_19, 
+```{r}
+names(mdl2$coefficients[is.na(mdl2$coefficients)])
+new_y1_data1 <- new_y1_data[, !colnames(new_y1_data) %in% names(mdl2$coefficients[is.na(mdl2$coefficients)])]
+str(new_y1_data1)
+
+mdl2a <- lm(formula = newy1 ~ f_5 + f_25 + t_24 + t_28 + t_31 + t_41, data = new_y1_data1)
+summary(mdl2a)
+par(mfrow = c(2,2))
+plot(mdl2a)
+par(mfrow = c(1,1))
+```
+
+
+```{r}
+
+getsqpercentchange <- function(dailyprice, initvalue = 1) {
+  pctchg = dailyprice
+  
+  for(i in 1:length(dailyprice)) {
+
+    if (i == 1) {
+      pctchg[i] = (sqrt(dailyprice[i]) - sqrt(initvalue))/sqrt(initvalue)
+    } else {
+      pctchg[i] = (sqrt(dailyprice[i]) - sqrt(dailyprice[i-1]))/sqrt(dailyprice[i-1])
+    }
+  }
+  return(pctchg)
+}
+
+getpercentchange <- function(dailyprice, initvalue = 1) {
+  pctchg = dailyprice
+  
+  for(i in 1:length(dailyprice)) {
+
+    if (i == 1) {
+      pctchg[i] = (dailyprice[i] - initvalue)/initvalue
+    } else {
+      pctchg[i] = (dailyprice[i] - dailyprice[i-1])/dailyprice[i-1]
+    }
+  }
+  return(pctchg)
+}
+
+```
+
+#Predictions with unseen test data
+
+```{r}
+
+
+unseen_data <- read.csv('Datasets/test_data.csv')
+rownames(unseen_data) <- unseen_data$timestamp
+
+test_xregs <- unseen_data[, colnames(unseen_data) %in% colnames(new_y1_data1)]
+
+prev_val <- mdl2a$fitted.values[length(mdl2a$fitted.values)]
+test_preds1 <- as.data.frame(predict(object = mdl2a, newdata = test_xregs))
+colnames(test_preds1) <- c("daily_price")
+test_preds1$y1 = getpercentchange(test_preds1$daily_price, prev_val[1])
+
+test_preds1$daily_price <- NULL
+test_preds1$y2 <- rep(1, 30)
+test_preds1
+write.csv(test_preds1, file = 'prediction.csv')
+
+```
+
+
+
+
+```{r}
+library(MASS)
+aicoptions <- stepAIC(mdl2, direction = "both", trace = TRUE)
+summary(aicoptions)
+```
+
+```{r}
+myfactors <- colnames(aicoptions$model)
+ncol(aicoptions$model)
+myfactors <- myfactors[-1]
+
+#reformulate(termlabels = listoffactors, response = 'y')
+lmformula <- reformulate(termlabels = myfactors, response = "newy1")
+
+mdl3 <- lm(formula = lmformula, data = new_y1_data)
+
+
+summary(mdl3)
+par(mfrow=c(2,2))
+plot(mdl3)
+par(mfrow=c(1,1))
+```
+
+```{r}
+
+prev_val <- mdl3$fitted.values[length(mdl3$fitted.values)]
+test_preds3 <- as.data.frame(predict(object = mdl3, newdata = test_xregs))
+colnames(test_preds3) <- c("daily_price")
+test_preds3$y1 = getpercentchange(test_preds3$daily_price, prev_val[1])
+
+test_preds3$daily_price <- NULL
+test_preds3$y2 <- rep(1, 30)
+test_preds3
+write.csv(test_preds3, file = 'prediction.csv')
+
+```
+
+##Seeing the performance of LASSO
+
+###First will try a LASSO model with all variables
+
+```{r}
+library(glmnet)
+set.seed(1234)
+
+cv_lasso <- cv.glmnet(as.matrix(subset(new_y1_data, select = -newy1)), as.matrix(new_y1_data$newy1), alpha = 1, type.measure = "deviance", nfolds = 5)
+par(mfrow=c(1,2))
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE)
+par(mfrow=c(1,1))
+
+
+```
+
+* Now using the min lambda, running lasso regression
+
+```{r}
+
+cv_lasso$lambda
+cv_lasso$lambda.min
+cv_lasso$lambda.1se
+lasso_1 <- glmnet(x = as.matrix(subset(new_y1_data, select = -newy1)), y = as.matrix(new_y1_data$newy1), family = "gaussian", alpha = 1, lambda = 2.28)
+
+```
+
+```{r}
+
+fitted_vals = predict(object = lasso_1, newx = as.matrix(subset(new_y1_data, select = -newy1)))
+
+prev_val <- fitted_vals[length(fitted_vals)]
+test_xregs <- unseen_data[, colnames(unseen_data) %in% colnames(new_y1_data)]
+test_preds4 <- as.data.frame(predict(object = lasso_1, newx = as.matrix(test_xregs)))
+colnames(test_preds4) <- c("daily_price")
+test_preds4$y1 = getpercentchange(test_preds4$daily_price, prev_val[1])
+
+test_preds4$daily_price <- NULL
+test_preds4$y2 <- rep(1, 30)
+test_preds4
+write.csv(test_preds4, file = 'prediction.csv',col.names = c('timestamp', 'y1', 'y2'))
+```
+
+```{r}
+library(glmnet)
+set.seed(1234)
+
+aiccols <- colnames(mdl3$model)
+aiccols <- aiccols[-1]
+
+cv_lasso <- cv.glmnet(as.matrix(new_y1_data[, colnames(new_y1_data) %in% aiccols]), as.matrix(new_y1_data$newy1), alpha = 1, type.measure = "deviance", nfolds = 5)
+par(mfrow=c(1,2))
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE, )
+par(mfrow=c(1,1))
+
+
+```
+
+```{r}
+cv_lasso$lambda.min
+cv_lasso$lambda
+lasso_2 <- glmnet(x = as.matrix(new_y1_data[, colnames(new_y1_data) %in% aiccols]), y = as.matrix(new_y1_data$newy1), family = "gaussian", alpha = 1, lambda = 2.28)
+
+summary(lasso_1)
+```
+
+
+```{r}
+
+fitted_vals = predict(object = lasso_2, newx = as.matrix(new_y1_data[, colnames(new_y1_data) %in% aiccols]))
+
+prev_val <- fitted_vals[length(fitted_vals)]
+test_xregs <- unseen_data[, colnames(unseen_data) %in% aiccols]
+test_preds5 <- as.data.frame(predict(object = lasso_2, newx = as.matrix(test_xregs)))
+colnames(test_preds5) <- c("daily_price")
+test_preds5$y1 = getpercentchange(test_preds5$daily_price, prev_val[1])
+
+test_preds5$daily_price <- NULL
+test_preds5$y2 <- rep(1, 30)
+test_preds5
+write.csv(test_preds5, file = 'prediction.csv',col.names = c('timestamp', 'y1', 'y2'))
+```

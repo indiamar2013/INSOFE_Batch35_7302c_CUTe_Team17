@@ -1,0 +1,534 @@
+---
+title: "Team17_CSE7302c_CUTe"
+author: "Amar Rao"
+date: "December 16, 2017"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    theme: united
+    highlight: tang
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+    code_folding: hide
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+#clear all environment and session variables
+rm(list = ls(all = TRUE))
+
+
+```
+
+
+Libraries
+```{r}
+
+library(knitr)
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(DMwR)
+library(forecast)
+library(lubridate)
+library(imputeTS)
+library(TTR)
+library(graphics)
+library(zoo)
+```
+
+## Reading data
+
+* set working directory
+```{r}
+setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
+
+```
+
+### Load the data set
+
+```{r}
+fin_data_orig <- read.csv('Datasets/train_data.csv', header = TRUE, sep = ',', na.strings = "", colClasses = "double", numerals = "no.loss")
+
+```
+
+```{r}
+str(fin_data_orig, list.len = ncol(fin_data_orig))
+head(fin_data_orig)
+```
+
+
+###Observations:
+
+* There're 109 regressors and 2 target variables (y1 and y2) and 1769 observations
+* Data appears to already have been scaled and standardized. 
+* There are a few empty columns (ie all rows are blank in these columns )
+* Some values are missing in other columns
+* Timestamp starts as a day number at 14 and goes up to 1782 days (1769 days in total)
+
+* We know y2 is a binary column. converting that to factor.
+
+```{r}
+cat_attrs <- c('y2')
+num_attrs <- setdiff(colnames(fin_data_orig), cat_attrs)
+
+fin_data_orig[cat_attrs] <- data.frame(sapply(fin_data_orig[cat_attrs], as.factor))
+str(fin_data_orig, list.len = ncol(fin_data_orig))
+
+
+```
+
+## Preprocessing
+### Empty Columns
+
+  * Following columns are completely blank (column with all NA values) in the data frame.
+
+```{r}
+
+removeemptycols <- function(in_df) {
+  emptycols <- colnames(in_df[,sapply(fin_data_orig, function(x) { all(is.na(x))})])
+  print(paste("Removing empty columns: ", emptycols))
+  return(in_df[, !colnames(in_df) %in% emptycols])
+}
+```
+
+
+*Removing these columns
+
+```{r}
+fin_data <- removeemptycols(fin_data_orig)
+
+```
+
+
+### Handle NAs
+
+* Checking how spread the NAs are in other columns and selecting columns that have more than 25% NAs to remove
+```{r}
+
+colswithna <- sort(colSums(is.na(fin_data)), decreasing = TRUE)
+
+nacolstoremove <- colswithna[colswithna > nrow(fin_data)*0.03]
+nacolstoremove
+```
+
+####So removing those columns. Will use knnImputation for the rest once I do the test-train split.
+
+```{r}
+fin_data <- fin_data[, !colnames(fin_data) %in% names(nacolstoremove)]
+str(fin_data)
+```
+
+* checking if there're any sparse columns (ie columns with very large number of zeros)
+
+```{r}
+sparsecols <- sort(colSums(fin_data[,!colnames(fin_data) %in% c("y1", "y2")] == 0), decreasing = TRUE)
+colstoremove <- sparsecols[sparsecols > round(nrow(fin_data) * 0.25)]
+colstoremove
+```
+
+
+* since these have very large number of zeros, they cannot have any meaningful impact on the target variables. So removing them.
+
+```{r}
+fin_data <- fin_data[, !colnames(fin_data) %in% names(colstoremove)]
+
+str(fin_data)
+```
+
+We don't need the timestamp column. Removing it
+
+```{r}
+
+rownames(fin_data) <- fin_data$timestamp
+fin_data$timestamp <- NULL
+head(fin_data)
+```
+
+###Train-Test split
+
+
+```{r}
+# although this is chronological data, randomizing the train-test split
+# to train with samples including more recent ones with a 90-10 split
+
+
+rows = seq(1, nrow(fin_data),1)
+set.seed(1234) #this ensures teh same output can be obtained when running
+train_rows = sample(rows,(0.90*nrow(fin_data)))
+
+fin_train <- fin_data[train_rows, ]
+
+fin_test <- fin_data[-train_rows, ]
+```
+
+
+###Imputation
+
+
+### Checking for rank deficiency and removing stationary columns (columns with no variance)
+
+```{r}
+
+
+constant_cols <- colnames(fin_data[ , sapply(fin_data, function(v){ var(v, na.rm=TRUE)==0})])
+constant_cols
+fin_data <- fin_data[, !colnames(fin_data) %in% constant_cols]
+```
+```{r}
+
+library(RANN)
+
+set.seed(1234)
+
+preproc_preds <- preProcess(x = subset(fin_data, select = -c(y1, y2)), method = c("knnImpute"))
+fin_data <- predict(preproc_preds, fin_data)
+
+sum(is.na(fin_data))
+
+```
+
+
+## scaling
+
+```{r}
+
+#scale_preds <- preProcess(x = subset(fin_train, select = -c(y1, y2), method = c("center", "scale")))
+#fin_train <- predict(object = scale_preds, fin_train)
+#fin_test <- predict(object = scale_preds, fin_test)
+
+```
+
+
+* now creating separate dataframes for y1
+* Since y2 indicates volatility in price, planning to use y1 in the predictions and not splitting it
+
+```{r}
+
+y1_data <- subset(fin_data, select = -y2)
+#y2_data <- subset(fin_data, select = -y1)
+
+
+```
+
+###First with OLS
+```{r}
+
+base_linreg <- lm(y1 ~ ., data = y1_data)
+
+summary(base_linreg)
+par(mfrow=c(2,2))
+plot(base_linreg)
+par(mfrow=c(2,2))
+
+```
+
+* The basis OLS against y1 as is is showing quite a bit of heteroscadasticity. So, will use a transformation of y1 for predictions
+
+
+
+
+###Transforming y1
+
+* y1 is the percent change in stock price. So the transformation is to actually get a value of the stockprice
+
+
+
+```{r}
+#function to help set the daily price.
+setdailyprice <- function(daily_price, init_value = 1) {
+  retprice <- daily_price
+  for(i in 1:length(daily_price)) {
+    if (i == 1) {
+      retprice[i] = init_value
+    } else {
+      retprice[i] = retprice[i-1]*(1+ daily_price[i])
+    }
+
+  }
+  return(retprice)
+}
+
+
+
+```
+
+```{r}
+
+new_y1_data <- y1_data
+new_y1_data$newy1 <- cbind(setdailyprice(y1_data$y1))
+new_y1_data <- subset(new_y1_data, select = -c(y1))
+str(new_y1_data)
+```
+
+###OLS with new target variable
+* Now we have a column newy1 that we will use as the target variable and build a lm model
+
+```{r}
+
+mdl2 <- lm(newy1 ~ ., data = new_y1_data)
+summary(mdl2)
+par(mfrow = c(2,2))
+plot(mdl2)
+par(mfrow = c(1,1))
+```
+
+* This has stabilized the heteroscadasticity although some is still left. Will use this model for now for predictions
+* We need to predict the percent change so the following function will get us that change.
+
+```{r}
+
+getpercentchange <- function(dailyprice, initvalue = 1) {
+  pctchg = dailyprice
+  
+  for(i in 1:length(dailyprice)) {
+
+    if (i == 1) {
+      pctchg[i] = (dailyprice[i] - initvalue)/initvalue
+    } else {
+      pctchg[i] = (dailyprice[i] - dailyprice[i-1])/dailyprice[i-1]
+    }
+  }
+  return(pctchg)
+}
+
+```
+
+#Predictions with unseen test data
+
+```{r}
+
+
+unseen_data <- read.csv('Datasets/test_data.csv')
+rownames(unseen_data) <- unseen_data$timestamp
+
+test_xregs <- unseen_data[, colnames(unseen_data) %in% colnames(new_y1_data)]
+
+test_preds1 <- as.data.frame(predict(object = mdl2, newdata = test_xregs))
+colnames(test_preds1) <- c("daily_price")
+prev_val <- mdl2$fitted.values[length(mdl2$fitted.values)]
+test_preds1$y1 = getpercentchange(test_preds1$daily_price, prev_val[1])
+
+test_preds1$daily_price <- NULL
+test_preds1$y2 <- rep(1, 30)
+test_preds1
+write.csv(test_preds1, file = 'prediction.csv')
+
+```
+
+####Testing against unseen data
+Submitting the predictions to Grader gave a MAPE of 98.86152%
+
+
+### Trying out more models
+## Using StepAIC to see if we can simplify a bit.
+
+```{r}
+library(MASS)
+aicoptions <- stepAIC(mdl2, direction = "both", trace = FALSE)
+summary(aicoptions)
+```
+
+```{r}
+myfactors <- colnames(aicoptions$model)
+ncol(aicoptions$model)
+myfactors <- myfactors[-1]
+
+lmformula <- reformulate(termlabels = myfactors, response = "newy1")
+
+mdl3 <- lm(formula = lmformula, data = new_y1_data)
+
+
+summary(mdl3)
+par(mfrow=c(2,2))
+plot(mdl3)
+par(mfrow=c(1,1))
+```
+
+* StepAIF has reduced the number of coefficients to 71 and the RSquared and plots are very similar to that of
+* basic StepAIC model. Predicting using this model
+```{r}
+
+prev_val <- mdl3$fitted.values[length(mdl3$fitted.values)]
+test_preds3 <- as.data.frame(predict(object = mdl3, newdata = test_xregs))
+colnames(test_preds3) <- c("daily_price")
+test_preds3$y1 = getpercentchange(test_preds3$daily_price, prev_val[1])
+
+test_preds3$daily_price <- NULL
+test_preds3$y2 <- rep(1, 30)
+test_preds3
+write.csv(test_preds3, file = 'prediction.csv')
+
+```
+
+####Testing against unseen data
+Submitting the predictions to Grader gave a MAPE of 111.598%. So not using this. Trying LASSO instead
+
+##Seeing the performance of LASSO
+
+###First will try a LASSO model with all variables
+
+```{r}
+library(glmnet)
+set.seed(1234)
+
+cv_lasso <- cv.glmnet(as.matrix(subset(new_y1_data, select = -newy1)), as.matrix(new_y1_data$newy1), alpha = 1, type.measure = "deviance", nfolds = 5)
+par(mfrow=c(1,2))
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE)
+par(mfrow=c(1,1))
+
+
+```
+
+* Now using the min lambda, running lasso regression
+
+```{r}
+
+cv_lasso$lambda
+lasso_1 <- glmnet(x = as.matrix(subset(new_y1_data, select = -newy1)), y = as.matrix(new_y1_data$newy1), family = "gaussian", alpha = 1, lambda = 2)
+
+```
+
+```{r}
+
+fitted_vals = predict(object = lasso_1, newx = as.matrix(subset(new_y1_data, select = -newy1)))
+
+prev_val <- fitted_vals[length(fitted_vals)]
+test_xregs <- unseen_data[, colnames(unseen_data) %in% colnames(new_y1_data)]
+test_preds4 <- as.data.frame(predict(object = lasso_1, newx = as.matrix(test_xregs)))
+colnames(test_preds4) <- c("daily_price")
+test_preds4$y1 = getpercentchange(test_preds4$daily_price, prev_val[1])
+
+test_preds4$daily_price <- NULL
+test_preds4$y2 <- rep(1, 30)
+test_preds4
+write.csv(test_preds4, file = 'prediction.csv',col.names = c('timestamp', 'y1', 'y2'))
+```
+
+```{r}
+library(glmnet)
+set.seed(1234)
+
+aiccols <- colnames(mdl3$model)
+aiccols <- aiccols[-1]
+
+cv_lasso <- cv.glmnet(as.matrix(new_y1_data[, colnames(new_y1_data) %in% aiccols]), as.matrix(new_y1_data$newy1), alpha = 1, type.measure = "deviance", nfolds = 5)
+par(mfrow=c(1,2))
+plot(cv_lasso)
+plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE )
+par(mfrow=c(1,1))
+
+
+```
+
+```{r}
+cv_lasso$lambda.min
+cv_lasso$lambda
+lasso_2 <- glmnet(x = as.matrix(new_y1_data[, colnames(new_y1_data) %in% aiccols]), y = as.matrix(new_y1_data$newy1), family = "gaussian", alpha = 1, lambda = 2.28)
+
+summary(lasso_1)
+```
+
+
+```{r}
+
+fitted_vals = predict(object = lasso_2, newx = as.matrix(new_y1_data[, colnames(new_y1_data) %in% aiccols]))
+
+prev_val <- fitted_vals[length(fitted_vals)]
+test_xregs <- unseen_data[, colnames(unseen_data) %in% aiccols]
+test_preds5 <- as.data.frame(predict(object = lasso_2, newx = as.matrix(test_xregs)))
+colnames(test_preds5) <- c("daily_price")
+test_preds5$y1 = getpercentchange(test_preds5$daily_price, prev_val[1])
+
+test_preds5$daily_price <- NULL
+test_preds5$y2 <- rep(1, 30)
+test_preds5
+write.csv(test_preds5, file = 'prediction.csv',col.names = c('timestamp', 'y1', 'y2'))
+```
+```{r}
+
+```
+
+
+
+
+
+#Classification
+
+```{r}
+
+y2_data1 <- new_y1_data
+y2_data <- subset(fin_data, select = -y1)
+y2_data1$y2 <- y2_data$y2
+
+
+cls_mdl1 = glm(formula = y2 ~ newy1, family = binomial, data = y2_data1)
+
+summary(cls_mdl1)
+
+```
+
+
+```{r}
+vol_pred1 <- predict(object = cls_mdl1, type = 'response')
+
+```
+
+
+```{r}
+if (!require(ROCR)) {
+  install.packages("ROCR")
+  require(ROCR)
+}
+
+vol_train_pred1 <- prediction(vol_pred1, y2_data$y2)
+# The performance() function from the ROCR package helps us extract metrics such as True positive rate, False positive rate etc. from the prediction object, we created above.
+vol_perf1 <- performance(prediction.obj = vol_train_pred1, measure = "tpr", x.measure = "fpr")
+plot(vol_perf1, col = rainbow(10), colorize=T, print.cutoffs.at=(seq(0,1,0.05)))
+
+```
+
+* Extract the AUC score of the ROC curve and store it in a variable named "auc"
+
+* Use the performance() function on the prediction object created above using the ROCR package, to extract the AUC score
+
+```{r}
+
+vol_auc1 <- performance(prediction.obj = vol_train_pred1, measure = "auc")
+
+
+# Access the auc score from the performance object
+vol_aucval1 <- vol_auc1@y.values[[1]]
+
+print(vol_aucval1)
+```
+
+
+```{r}
+test_xregs <- unseen_data[, colnames(unseen_data) %in% colnames(new_y1_data)]
+
+
+prev_val <- mdl2$fitted.values[length(mdl2$fitted.values)]
+
+test_xregs$newy1 <- cbind(setdailyprice(test_preds1$y1, prev_val[1]))
+
+test_xregs
+test_preds1
+
+vol_preds_test <- predict(cls_mdl1, test_xregs, type = "response")
+
+vol_preds_test <- ifelse(vol_preds_test > 0.255, "1", "0")
+
+test_preds1$y2 <- vol_preds_test
+test_preds1
+write.csv(test_preds1, file = 'prediction.csv')
+```
+
+
+
