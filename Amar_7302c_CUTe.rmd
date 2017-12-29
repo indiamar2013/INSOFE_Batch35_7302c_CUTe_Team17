@@ -46,7 +46,7 @@ library(zoo)
 
 * set working directory
 ```{r}
-setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
+setwd('c:/Users/212629693/Documents/Personal/ds-classes/INSOFE_Batch35_7302c_CUTe_Team17')
 
 ```
 
@@ -54,8 +54,8 @@ setwd('/home/amar/classes/INSOFE_Batch35_7302c_CUTe_Team17')
 
 ```{r}
 fin_data_orig <- read.csv('Datasets/train_data.csv', header = TRUE, sep = ',', na.strings = "", colClasses = "double", numerals = "no.loss")
-str(fin_data_orig, list.len = ncol(fin_data_orig))
-head(fin_data_orig)
+# str(fin_data_orig, list.len = ncol(fin_data_orig))
+# head(fin_data_orig)
 ```
 
 * We know y2 is a binary column. converting that to factor.
@@ -65,12 +65,12 @@ cat_attrs <- c('y2')
 num_attrs <- setdiff(colnames(fin_data_orig), cat_attrs)
 
 fin_data_orig[cat_attrs] <- data.frame(sapply(fin_data_orig[cat_attrs], as.factor))
-str(fin_data_orig, list.len = ncol(fin_data_orig))
-head(fin_data_orig, 25)
+#str(fin_data_orig, list.len = ncol(fin_data_orig))
+#head(fin_data_orig, 25)
 ```
 
 ```{r}
-summary(fin_data_orig)
+#summary(fin_data_orig)
 ```
 
 
@@ -98,7 +98,7 @@ emptycols
 
 ```{r}
 fin_data <- fin_data_orig[, !colnames(fin_data_orig) %in% emptycols]
-str(fin_data)
+#str(fin_data)
 ```
 
 ### Handle NAs
@@ -107,7 +107,7 @@ str(fin_data)
 ```{r}
 colswithna <- sort(colSums(is.na(fin_data)), decreasing = TRUE)
 
-nacolstoremove <- colswithna[colswithna > nrow(fin_data)*0.25]
+nacolstoremove <- colswithna[colswithna > nrow(fin_data)*0.03]
 nacolstoremove
 ```
 
@@ -115,7 +115,7 @@ nacolstoremove
 
 ```{r}
 fin_data <- fin_data[, !colnames(fin_data) %in% names(nacolstoremove)]
-str(fin_data)
+#str(fin_data)
 ```
 
 
@@ -123,7 +123,6 @@ str(fin_data)
 
 ```{r}
 sparsecols <- sort(colSums(fin_data[,!colnames(fin_data) %in% c("y1", "y2")] == 0), decreasing = TRUE)
-str(sparsecols)
 sparsecols
 colstoremove <- sparsecols[sparsecols > round(nrow(fin_data) * 0.25)]
 colstoremove
@@ -134,7 +133,7 @@ colstoremove
 ```{r}
 fin_data <- fin_data[, !colnames(fin_data) %in% names(colstoremove)]
 
-str(fin_data)
+#str(fin_data)
 ```
 ### convert timestamp to date
 * The timestamps are given as day numbers starting with 14. We have observations for 1769 days (approx 4.8 years of data)
@@ -145,8 +144,8 @@ str(fin_data)
 
 ```{r}
 #Since this is chronological data, we cannot do random sampling.
-# Setting the first 70% to train and last 30% to test
-train_rows <- 1:round(nrow(fin_data)*0.7)
+# Setting the first 90% to train and last 10% to test
+train_rows <- 1:round(nrow(fin_data)*0.9)
 
 fin_train <- fin_data[train_rows, ]
 
@@ -160,7 +159,7 @@ fin_test <- fin_data[-train_rows, ]
 
 library(RANN)
 set.seed(1234)
-preproc_preds <- preProcess(x = subset(fin_train, select = -c(y1, y2)), method = c("knnImpute"))
+preproc_preds <- preProcess(x = subset(fin_train, select = -c(y1, y2)), method = c("range", "knnImpute"))
 
 fin_train <- predict(object = preproc_preds, fin_train)
 fin_test <- predict(object = preproc_preds, fin_test)
@@ -215,8 +214,6 @@ fin_x_reg <- subset(fin_train, select = -c(y1, y2))
 nrow(fin_x_reg)
 ncol(fin_x_reg)
 rmtx <- rankMatrix(fin_x_reg)
-summary(rmtx)
-str(rmtx)
 rmtx[1]
 
 ```
@@ -226,10 +223,10 @@ rmtx[1]
 
 ```{r}
 
+
 constant_cols <- names(fin_train[, sapply(fin_train, function(v) var(v, na.rm=TRUE)==0)])
 constant_cols
-str(constant_cols)
-length(constant_cols)
+
 ```
 
 * Will exclude these columns for further analysis
@@ -243,7 +240,8 @@ fin_data <- fin_data[, !colnames(fin_data) %in% constant_cols]
 
 
 #confirming if that fixes the rank issue
-rankMatrix(as.matrix(subset(fin_train, select = -c(y1, y2))))
+rmtx <- rankMatrix(as.matrix(subset(fin_train, select = -c(y1, y2))))
+rmtx[1]
 ncol(fin_train)
 ```
 
@@ -281,7 +279,7 @@ pacf(y1ts)
 
 ```
 
-PACF indicates 5 significant lags, so we can use non seasonal p = 5
+PACF indicates 5 significant lags, so we can use non seasonal p = 4
 
 * Check if we need to difference
 
@@ -292,11 +290,11 @@ nsdiffs(y1ts)
 
 * No need to difference
 
-###First we will build a basic Arima(5,0,4) model without any xregs
+###First we will build a basic Arima(2,0,4) model without any xregs
 * Premise here is that previous values of y1 are strongest predictors for future y1
 
 ```{r}
-arima1 <- Arima(y = y1ts, order = c(5,0,4))
+arima1 <- Arima(y = y1ts, order = c(6,0,4))
 arima1
 ```
 
@@ -316,15 +314,26 @@ accuracy(arima1preds, y1_test$y1)
 
 ```
 
-*Getting a MAPE of 154.59 with training set and 140.37 with test set.
+*Getting a MAPE of 215.59 with training set and 126.37 with test set.
 
 ##Now Arima with xregs (all columns)
 
 ```{r}
-arima2 <- Arima(y = y1ts, order= c(5,0,4), xreg = subset(y1_train, select = -y1))
+arima2 <- Arima(y = y1ts, order= c(6,0,4), xreg = subset(y1_train, select = -y1))
+arima2
+arima2preds <- forecast(object = arima2, h = nrow(y1_test), xreg = subset(y1_train, select = -y1))
+
+plot(arima2preds)
 ```
 
-* Getting the error shown above.
+
+```{r}
+accuracy(arima2preds, y1_test$y1)
+
+```
+
+* MAPE jumped to 450.21 vs training and 218.21 against test.
+
 
 ###So Arima with all xregs in the dataset doesn't work. We will have to find out which columns to include.
 For that, using StepAIC. IN that process, we will also evaluate the performance of OLS.
@@ -336,7 +345,7 @@ For that, using StepAIC. IN that process, we will also evaluate the performance 
 fin_train$timestamp <- NULL
 y1_train$timestamp <- NULL
 
-base_linreg <- lm(100*(1+y1) ~ ., data = y1_train)
+base_linreg <- lm(y1 ~ ., data = y1_train)
 
 summary(base_linreg)
 par(mfrow=c(2,2))
@@ -355,9 +364,9 @@ setdailyprice <- function(daily_price) {
   retprice <- daily_price
   for(i in 1:length(daily_price)) {
     if (i == 1) {
-      retprice[i] = 1
+      retprice[i] = 100 + (100 *daily_price[i])
     } else {
-      retprice[i] = retprice[i-1]*(1+ daily_price[i])
+      retprice[i] = retprice[i-1]+(100 * daily_price[i])
     }
 
   }
@@ -372,7 +381,10 @@ setdailyprice <- function(daily_price) {
 new_y1_train <- y1_train
 new_y1_train$newy1 <- cbind(setdailyprice(y1_train$y1))
 new_y1_train <- subset(new_y1_train, select = -c(y1))
-str(new_y1_train)
+new_y1_test <- y1_test
+new_y1_test$newy1 <- cbind(setdailyprice(new_y1_test$y1))
+new_y1_test <- subset(new_y1_test, select = -c(y1))
+
 ```
 
 ```{r}
@@ -390,37 +402,58 @@ par(mfrow = c(1,1))
 
 ```{r}
 
-ols_all_preds <- predict(new_lm_mdl, y1_test)
+ols_all_preds <- predict(new_lm_mdl, new_y1_test)
 
 print('Error metrics for Train data')
 print(regr.eval(ols_all_preds, new_y1_train$newy1))
 print("")
 print('Error metrics for Test data')
-print(regr.eval(ols_all_preds, setdailyprice(y1_test$y1)))
+print(regr.eval(ols_all_preds, new_y1_test$newy1))
 ```
 
-###OLS with all variables is giving a MAPE of 2.34 with Training data and 0.99 with Test Data!!!
+###OLS with all variables is giving a MAPE of 15.64% with Training data and 1.05% with Test Data!!!
+
+#let's see if we can improve things by removing row 1208
+
+```{r}
+new_y1_train <- new_y1_train[-1208,]
+
+
+log_lm_mdl <- lm(newy1 ~ ., data = new_y1_train)
+par(mfrow = c(2,2))
+plot(log_lm_mdl)
+par(mfrow = c(1,1))
+```
+
+
+```{r}
+ols_all_preds <- predict(log_lm_mdl, new_y1_test)
+
+print('Error metrics for Train data')
+print(regr.eval(ols_all_preds, new_y1_train$newy1))
+print("")
+print('Error metrics for Test data')
+print(regr.eval(ols_all_preds, new_y1_test$newy1))
+```
+
+
 
 * Let's see if StepAIC can do better
 
 ```{r}
 library(MASS)
-aicoptions <- stepAIC(new_lm_mdl, direction = "both", trace = FALSE)
+aicoptions <- stepAIC(log_lm_mdl, direction = "both", trace = FALSE)
 summary(aicoptions)
 ```
 
 
 ####Based on stepAIC, will use only the following regressors:
 
-lm(formula = 100*(1+y1) ~ d_0 + d_1 + d_4 + f_16 + f_18 + f_20 + f_21 + 
-    f_29 + f_34 + f_39 + f_40 + f_48 + f_49 + f_52 + f_58 + t_2 + 
-    t_6 + t_24 + t_25 + t_34 + t_39 + t_43 + t_44 + f_33 + f_9 + 
-    f_19 + t_14, data = y1_train)
-    
     
 ```{r}
 
 myfactors <- colnames(aicoptions$model)
+
 ncol(aicoptions$model)
 myfactors <- myfactors[-1]
 
@@ -434,37 +467,141 @@ summary(aic_rec_mdl)
 par(mfrow=c(2,2))
 plot(aic_rec_mdl)
 par(mfrow=c(1,1))
+
+require(car)
+var_vifs <- sort(vif(aic_rec_mdl), decreasing=TRUE)
+collinearity_vars <- var_vifs[var_vifs > 10]
+collinearity_vars
+length(collinearity_vars)
+
+require(ggcorrplot)
+
+ggcorrplot(cor(new_y1_train[,colnames(new_y1_train) %in% names(collinearity_vars)]), hc.order = TRUE, type = "upper", insig = "blank")
+cors <- data.frame(cor(new_y1_train[,colnames(new_y1_train) %in% names(collinearity_vars)]))
+
+
+f_cols <- cors[sapply(colnames(cors), function(x) {grepl('f_', x,  fixed=TRUE)}),
+     sapply(colnames(cors), function(x) {grepl('f_', x,  fixed=TRUE)})]
+ggcorrplot(f_cols, type = "upper", insig = "blank")
+
+t_cols <- cors[sapply(colnames(cors), function(x) {grepl('t_', x,  fixed=TRUE)}),
+     sapply(colnames(cors), function(x) {grepl('t_', x,  fixed=TRUE)})]
+ggcorrplot(t_cols, type = "upper", insig = "blank")
+
+d_cols <- cors[sapply(colnames(cors), function(x) {grepl('d_', x,  fixed=TRUE)}),
+     sapply(colnames(cors), function(x) {grepl('d_', x,  fixed=TRUE)})]
+ggcorrplot(d_cols, type = "upper", insig = "blank")
+
+
+corrplot::corrplot(cor(new_y1_train[,colnames(new_y1_train) %in% names(collinearity_vars)]))
+aic_rec_mdl$coefficients
 ```
 
 ```{r}
-aic_preds <- predict(aic_rec_mdl, y1_test)
+
+low_collinear_cols <- c('d_0', "d_1", "d_2", "d_3",
+                        "f_0", "f_2", "f_5","f_7",
+                        "f_8", "f_9", "f_10", "f_12", 
+                        "f_14", "f_15", "f_16", "f_19", 
+                        "f_22", "f_23", "f_24", "f_29",
+                        "f_30", "f_32", "f_33", "f_37",
+                        "f_39", "f_40", "f_41", "f_42",
+                        "f_43", "f_44", "f_51", "f_52",
+                        "f_53", "f_54", "f_58", "f_60",
+                        "t_3", "t_6", "t_11", "t_14",
+                        "t_21", "t_22", "t_27", "t_35",
+                        "t_38", "t_39")
+
+lmformula <- reformulate(termlabels = low_collinear_cols, response = "newy1")
+lmformula
+lm_mdl2 <- lm(lmformula, data = new_y1_train)
+summary(lm_mdl2)
+plot(lm_mdl2)
+mdl2_preds <- predict(lm_mdl2, y1_test)
 
 print('Error metrics for Train data')
-print(regr.eval(aic_preds, new_y1_train$newy1))
+print(regr.eval(mdl2_preds, new_y1_train$newy1))
 print("")
 print('Error metrics for Test data')
-print(regr.eval(aic_preds, setdailyprice(y1_test$y1)))
+print(regr.eval(mdl2_preds, new_y1_test$newy1))
 
-
+new_aic <- stepAIC(object = lm_mdl2, direction = "both")
 
 ```
 
 * WIth StepAIC recommended model MAPE on training went up to 3.2 and on test went up to 1.09
 
+```{r}
+
+lm_mdl3 <- lm(newy1 ~ d_1 + d_2 + d_3 + f_0 + f_2 + f_5 + f_7 + f_8 + f_9 + 
+    f_10 + f_12 + f_14 + f_15 + f_16 + f_19 + f_22 + f_24 + f_29 + 
+    f_30 + f_32 + f_33 + f_37 + f_39 + f_40 + f_41 + f_42 + f_44 + 
+    f_51 + f_52 + f_53 + f_54 + f_58 + t_3 + t_6 + t_11 + t_14 + 
+    t_21 + t_22 + t_27 + t_35 + t_38 + t_39, data = new_y1_train)
+plot(lm_mdl3)
+summary(lm_mdl3)
+```
+
+```{r}
+
+mdl3_preds <- predict(lm_mdl3, y1_test)
+
+print('Error metrics for Train data')
+print(regr.eval(mdl3_preds, new_y1_train$newy1))
+print("")
+print('Error metrics for Test data')
+print(regr.eval(mdl3_preds, new_y1_test$newy1))
+
+```
+
 
 ##Now we will try Arima with regressors based on StepAIC recommended regressors
 
 ```{r}
+# start_row <- nrow(new_y1_train)-(252*2)
+# end_row <- nrow(new_y1_train)
+# recent_train <- new_y1_train[start_row : end_row, ]
+mdloptions <- colnames(lm_mdl3$model)
+mdloptions <- mdloptions[!mdloptions %in% c('d_3', 'f_5', 'f_24', 'f_58', 't_11', 't_39')]
+recent_train <- new_y1_train[,colnames(new_y1_train) %in% mdloptions]
+new_y1_ts <- ts(recent_train$newy1, start = c(2010, 1,1), frequency = 365)
+acf(new_y1_ts)
+pacf(new_y1_ts)
+plot(decompose(new_y1_ts))
+ndiffs(new_y1_ts)
+nsdiffs(new_y1_ts)
+new_x_reg <- recent_train[,!colnames(recent_train) %in% 'newy1']
+nrow(new_x_reg)
+ncol(new_x_reg)
+rmtx <- rankMatrix(new_x_reg)
+rmtx[1]
+constant_cols <- names(new_x_reg[, sapply(new_x_reg, function(v) var(v, na.rm=TRUE)==0)])
+constant_cols
+str(constant_cols)
+length(constant_cols)
+new_x_reg <- new_x_reg[, !colnames(new_x_reg) %in% constant_cols]
 
-new_y1_xreg <- subset(y1_train[, colnames(aic_rec_mdl$model)], select = -y1)
+arima3 <- auto.arima(y = new_y1_ts, xreg = new_x_reg, allowdrift = TRUE)
 
-arima3 <- Arima(y = y1ts, order = c(5,0,4), xreg = new_y1_xreg)
 
-arima3_preds <- forecast(object = arima3, h = nrow(y1_test), xreg = new_y1_xreg)
-print(accuracy(arima3_preds,y1_test$y1))
+arima3
+arima3_preds <- forecast(object = arima3, h = nrow(new_y1_test), xreg = new_x_reg)
+print(accuracy(arima3_preds,new_y1_test$newy1))
 
 plot(arima3_preds)
+acf(arima3$residuals)
+pacf(arima3$residuals)
 
+arima4 <- Arima(y = new_y1_ts, xreg = new_x_reg, order = c(3,1,4))
+arima4
+test_x_reg <- new_y1_test[,colnames(new_y1_test) %in% colnames(new_x_reg)]
+arima4_preds <- forecast(object = arima4, xreg = test_x_reg)
+print(accuracy(arima3_preds,new_y1_test$newy1))
+ndiffs(x = new_y1_ts)
+plot(arima4_preds)
+acf(arima4$residuals)
+pacf(arima4$residuals)
+plot(residuals(arima4), type='response')
 
 ```
 
@@ -506,7 +643,7 @@ Not much improvement in MAPE with AutoArima suggested (3,0,0)
 library(glmnet)
 set.seed(1234)
 
-cv_lasso <- cv.glmnet(as.matrix(subset(y1_train, select = -y1)), as.matrix(y1_train$y1), alpha = 1, type.measure = "deviance", nfolds = 4)
+cv_lasso <- cv.glmnet(as.matrix(new_x_reg), as.matrix(new_y1_train$newy1), alpha = 1, type.measure = "deviance", nfolds = 4)
 par(mfrow=c(1,2))
 plot(cv_lasso)
 plot(cv_lasso$glmnet.fit, xvar = 'lambda', label = TRUE)
@@ -518,10 +655,16 @@ par(mfrow=c(1,1))
 * Now using the min lambda, running lasso regression
 
 ```{r}
-lasso_1 <- glmnet(x = as.matrix(subset(y1_train, select = -y1)), y = as.matrix(y1_train$y1), family = "gaussian", alpha = 1, lambda = cv_lasso$lambda.min)
+cv_lasso$lambda
+cv_lasso$lambda.1se
+lasso_1 <- glmnet(as.matrix(new_x_reg), as.matrix(new_y1_train$newy1), family = "gaussian", alpha = 1, lambda = 75)
 
-lasso_1_preds <- predict(lasso_1, as.matrix(subset(y1_test, select = -y1)))
-regr.eval(lasso_1_preds, y1_test$y1)
+#63.15664686
+
+lasso_1_test_preds <- predict(lasso_1, as.matrix(test_x_reg))
+lasso_1_train_preds <- predict(lasso_1, as.matrix(new_x_reg))
+regr.eval(lasso_1_train_preds, new_y1_train$newy1)
+regr.eval(lasso_1_test_preds, new_y1_test$newy1)
 
 
 ```
@@ -536,7 +679,7 @@ X_train = as.matrix(new_y1_xreg)
 
 X_test <- as.matrix(subset(y1_test[, colnames(aic_rec_mdl$model)], select = -y1))
 
-cv_lasso_1 <- cv.glmnet(X_train, as.matrix(y1_train$y1), alpha = 1, type.measure = "deviance", nfolds = 4)
+cv_lasso_1 <- cv.glmnet(X_train, as.matrix(y1_train$y1), alpha = 1,  nfolds = 4)
 
 par(mfrow=c(1,2))
 plot(cv_lasso_1)
